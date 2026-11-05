@@ -61,7 +61,7 @@ Documents\RLMM maps first. The Visual C++ and DirectX runtimes stay installed (o
 
 - 64-bit Windows 10 or 11.
 - About 20 GB free during the install, and 11 GB afterwards.
-- Expect 15 to 30 minutes, mostly downloads (about 5.5 GB).
+- Expect 10 to 30 minutes, depending on your connection (about 5.5 GB of downloads).
 
 ## Options
 
@@ -93,7 +93,7 @@ The exe lands in `dist\`. Building needs the .NET SDK; running the exe needs not
 
 | Component | Source |
 |---|---|
-| UDK 2015-02 installer | archive.org (Google Drive mirrors as fallback); MD5 and Epic's signature are verified |
+| UDK 2015-02 installer | Google Drive (the mirror rocketleaguemapmaking.com links), archive.org as fallback; MD5 and Epic's signature are verified |
 | Dummy classes | [ghostrider-05/RL-dummy-classes2](https://github.com/ghostrider-05/RL-dummy-classes2), latest commit |
 | Not So Dummy Assets, dummy assets, map templates | [RocketLeagueMapmaking](https://github.com/RocketLeagueMapmaking) on GitHub, latest commit (Not So Dummy Assets file by file from Git LFS, 16 downloads at a time) |
 | Complexity template | Aceman3000, via [bakkesplugins](https://bakkesplugins.com/maps/339) |

@@ -47,7 +47,7 @@ function Invoke-RLMMSetup {
     $ProgressPreference = 'SilentlyContinue'
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-    $SetupVersion = '1.0.0'
+    $SetupVersion = '1.0.1'
     $DefaultInstallDir = 'C:\UDK\RLMM'
     $RepoRaw = 'https://raw.githubusercontent.com/armand0e/rlmm-setup/main'
 
@@ -55,9 +55,11 @@ function Invoke-RLMMSetup {
     # Sources. GitHub components resolve to their latest commit at run time; files are pinned by size/MD5.
     # --------------------------------------------------------------------------------------------------------
     $UdkInstaller = @{
-        Urls = @('https://archive.org/download/udkinstaller/UDKInstall-2015-02.exe',
-                 'https://drive.usercontent.google.com/download?id=1z9C3t6nKW1utWilVshODxyGcucxuzbOW&export=download&confirm=t',
-                 'https://drive.usercontent.google.com/download?id=1ozqiKBgcWSgcq7X5J6g0AErKyevjMRwd&export=download&confirm=t')
+        # Google Drive first: ~50 MB/s. archive.org caps each user at ~0.5-1.5 MB/s (more connections don't help),
+        # so it is only the fallback for when Drive's download quota for the file is used up.
+        Urls = @('https://drive.usercontent.google.com/download?id=1z9C3t6nKW1utWilVshODxyGcucxuzbOW&export=download&confirm=t',
+                 'https://drive.usercontent.google.com/download?id=1ozqiKBgcWSgcq7X5J6g0AErKyevjMRwd&export=download&confirm=t',
+                 'https://archive.org/download/udkinstaller/UDKInstall-2015-02.exe')
         File = 'UDKInstall-2015-02.exe'
         Size = [long]2001725784
         Md5  = '790744C95A74626E7C381CCF13C88F9D'
@@ -281,6 +283,7 @@ class RLMMSubStream : Stream {
             $code = 1
             if ($script:Curl) {
                 $resume = @()
+                if ((Test-Path -LiteralPath $part) -and (Get-Item -LiteralPath $part).Length -lt 1MB) { Remove-Item -LiteralPath $part -Force }   # a web page, not a partial file
                 if ((Test-Path -LiteralPath $part) -and $Size -gt 0 -and (Get-Item -LiteralPath $part).Length -lt $Size) { $resume = @('-C', '-') }
                 elseif (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force }
                 $bar = if ($script:Wiz) { '-sS' } else { '--progress-bar' }
@@ -294,7 +297,12 @@ class RLMMSubStream : Stream {
             }
             $complete = (Test-Path -LiteralPath $part) -and ($Size -le 0 -or (Get-Item -LiteralPath $part).Length -eq $Size)
             if ($code -eq 0 -and $complete) { break }
-            if ($attempt -eq 4) { throw "Download failed from $(([uri]$Url).Host) (curl exit $code)." }
+            if ($code -eq 0 -and $Size -gt 1MB -and (Test-Path -LiteralPath $part) -and (Get-Item -LiteralPath $part).Length -lt 1MB) {
+                # Google Drive answers with a web page when the file's download quota is used up: go to the next mirror
+                Remove-Item -LiteralPath $part -Force
+                throw "$(([uri]$Url).Host) sent a web page instead of the file (download limit reached?)."
+            }
+            if ($attempt -eq 4 -or $code -eq 22) { throw "Download failed from $(([uri]$Url).Host) (curl exit $code)." }   # 22: HTTP error, try the next mirror
             Info "Download interrupted (curl exit $code); retrying ($attempt/3)..."
             Start-Sleep -Seconds (5 * $attempt)
         }
