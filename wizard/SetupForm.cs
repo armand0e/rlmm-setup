@@ -735,7 +735,7 @@ namespace RLMMSetup
                 if (!ok) t.Append("Not installed: " + string.Join(", ", failed) + ". Run RLMM Setup again to retry.\n\n");
                 t.Append("UDK is installed at " + targetDir + ".\n\n");
                 t.Append("For a stadium, start with File > New Level > Soccar - Complexity. To play a map in Rocket League, drag the saved .udk onto \"Test map in Rocket League.bat\" in the Maps folder.\n\n");
-                t.Append("If UDK offers to save dummy asset packages (Not So Dummy Assets, Misc...), don't: they are stand-ins for Rocket League's files and UDK can't resave them. To update or repair them later, open Start > RLMM > Update RLMM.");
+                t.Append("Opening the Soccar template (or any map built on Rocket League's assets) shows \"Load Errors\" and \"Updating Changed Materials\". That is normal: click OK on the errors and Cancel on the materials. Never resave the dummy asset packages: UDK can't save them and crashes. To update or repair them, use Start > RLMM > Update RLMM.");
                 fText.Text = t.ToString();
                 cLaunch.Visible = File.Exists(Util.DesktopShortcut) && Util.ShortcutPointsInto(Util.DesktopShortcut, targetDir);
             }

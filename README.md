@@ -34,6 +34,14 @@ Both do the same thing (the wizard runs the same script); use whichever you pref
 You answer three questions at most: the UDK license (you can read it first), the install folder (Enter keeps
 `C:\UDK\RLMM`), and, when updating, whether to apply the updates. Windows asks once for administrator rights.
 
+## Normal warnings in UDK
+
+Opening the Soccar template, or any map built on Rocket League's assets, shows a **Load Errors** list and an
+**Updating Changed Materials** prompt. Both are expected: the dummy assets are stand-ins for Rocket League's files and
+reference things UDK doesn't have. Click **OK** on the errors and **Cancel** on the materials prompt. Never resave
+the dummy asset packages (EuroStadium_P, GameInfo_Soccar_SF and so on): UDK fails to save them and crashes. If one
+got damaged anyway, Start menu > RLMM > Update repairs it.
+
 ## Updating (version control)
 
 Run the command again, or use Start menu > RLMM > Update. Setup lists every component with the version you have and
