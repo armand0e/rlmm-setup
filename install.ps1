@@ -1,4 +1,4 @@
-﻿<#
+<#
     RLMM Setup: one command to install UDK for Rocket League map making.
 
     Installs UDK 2015 (the editor Rocket League maps are built in) and sets it up for Rocket League: compiled dummy
