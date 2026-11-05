@@ -6,7 +6,7 @@ param([switch]$Test)
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 if (-not (Test-Path (Join-Path $here 'RLMM.ico')) -or -not (Test-Path (Join-Path $here 'logo.png'))) {
-    & (Join-Path $here 'make-icon.ps1') -OutDir $here
+    python -I (Join-Path $here 'logo\make-logo.py')      # needs Python with Pillow
 }
 $dist = Join-Path (Split-Path -Parent $here) 'dist'
 $obj = Join-Path $here 'obj'
