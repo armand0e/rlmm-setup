@@ -30,8 +30,10 @@ Both do the same thing (the wizard runs the same script); use whichever you pref
 - **Map templates** (File > New Level): Soccar, Hoops, Dropshot and Test by Mr. Swaggles, and Mannfield (Aceman3000's
   Complexity stadium), all with the cubemap fix; plus Aceman3000's **Misc** assets so boost pads and goal crossbar
   physics work.
-- **Rocket League testing:** your Steam or Epic install is found automatically and Utopia Retro is backed up. Drag a
-  saved map onto `Test map in Rocket League.bat` in your Maps folder to play it.
+- **Rocket League testing:** double-click a saved `.udk` map and it opens in Rocket League as Utopia Retro (Free Play >
+  Utopia Retro). Setup finds your Steam or Epic install (or asks; the wizard has a field for it), backs up Utopia Retro,
+  writes the classic `UtopiaOverwrite.bat` into your Maps folder with your Rocket League folder in it, and makes it the
+  app `.udk` files open with. Every setup run or update rewrites it, so it follows Rocket League if you move it.
 - **Shortcuts:** "UDK - Rocket League" on the desktop, and Start menu > RLMM (editor, maps folder, update, restore Utopia).
 
 You answer three questions at most: the UDK license (you can read it first), the install folder (Enter keeps
@@ -57,7 +59,7 @@ bring its dummy classes, assets and templates up to date.
 ## Uninstalling
 
 Settings > Apps > "Unreal Development Kit: 2015-02 (Rocket League)" > Uninstall, or Start menu > RLMM > Uninstall RLMM.
-It restores Utopia Retro, removes the shortcuts and the install folder, and can move your Maps folder to
+It restores Utopia Retro, removes the shortcuts, the .udk double-click and the install folder, and can move your Maps folder to
 Documents\RLMM maps first. The Visual C++ and DirectX runtimes stay installed (other programs use them).
 
 ## Requirements
@@ -79,6 +81,7 @@ Run as a file to pass options:
 | `-KeepDownloads` | Keep the installer and zips afterwards |
 | `-Local <folder>` | Use `sources.json`, `templates\` and `assets\` from this copy of the repo (automatic when `install.ps1` runs from one) |
 | `-CheckOnly` | Only show installed vs latest versions |
+| `-RocketLeagueDir <path>` | The Rocket League to test maps in (default: the one chosen last time, or the one found) |
 | `-SkipPrerequisites`, `-SkipRocketLeague` | Leave the runtimes, or the Rocket League folder, alone |
 | `-AcceptEula`, `-Yes` | Unattended installs (only accept the EULA if you have read it) |
 

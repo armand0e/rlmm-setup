@@ -16,10 +16,12 @@ namespace RLMMSetup
         // Hidden options (tests and power users):
         //   /cache <dir>              download folder (passed to install.ps1 -CacheDir)
         //   /selftest <dir> <shots>   drive the wizard automatically, off screen, saving a PNG of each page
+        //   /pagesonly                with /selftest: stop at the install or update page instead of running
         //   /uninstall [<dir>]        uninstall (Apps & features and Start menu use this)
         public static string CacheDir;
         public static string SelfTestDir;
         public static string ShotDir;
+        public static bool PagesOnly;
 
         [STAThread]
         static int Main(string[] args)
@@ -38,6 +40,7 @@ namespace RLMMSetup
             CacheDir = Opt("/cache");
             SelfTestDir = Opt("/selftest");
             ShotDir = Opt("/selftest", 2);
+            PagesOnly = Find("/pagesonly") >= 0;
 
             if (Find("/uninstall") >= 0)
             {

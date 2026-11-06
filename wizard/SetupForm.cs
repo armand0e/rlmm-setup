@@ -28,6 +28,10 @@ namespace RLMMSetup
         TextBox dirBox;
         Label spaceLabel;
         CheckBox cRuntimes, cRocket, cKeep;
+        TextBox rlBox, rlUpdBox;          // Rocket League folder: install page, update page
+        Panel rlRow;
+        string rlSaved;                   // the folder the install being updated was set up with
+        bool upToDate;
         Label updIntro, updStatus;
         ListView comps;
         Label stepLabel, detailLabel;
@@ -144,10 +148,50 @@ namespace RLMMSetup
             spaceLabel = Para(st, "", w, 6);
             Para(st, "Options", w, 16, Bold(9F));
             cRuntimes = Check(st, "Install the Visual C++ 2010 and DirectX 9 runtimes UDK needs (recommended)", true);
-            cRocket = Check(st, "Set up map testing in Rocket League (Utopia Retro is backed up first)", true);
+            cRocket = Check(st, "Set up map testing in Rocket League: double-click a saved .udk map to play it as Utopia Retro", true);
+            rlBox = RocketLeagueRow(st, w, 18, out rlRow);
+            cRocket.CheckedChanged += (s, e) => rlRow.Enabled = cRocket.Checked;
             cKeep = Check(st, "Keep the downloaded files afterwards (about 5.5 GB)", false);
             var note = Para(st, "Setup downloads about 5.5 GB and takes 20 to 40 minutes, mostly downloading. You can keep using your PC meanwhile.", w, 16);
             note.ForeColor = SystemColors.GrayText;
+        }
+
+        /// <summary>"Rocket League:" [folder] [Browse...], indented by <paramref name="indent"/>.</summary>
+        TextBox RocketLeagueRow(Control parent, int w, int indent, out Panel row)
+        {
+            row = new Panel { Size = new Size(w, 27), Margin = new Padding(0, 6, 0, 0) };
+            var label = new Label { Text = "Rocket League:", AutoSize = true, Location = new Point(indent, 5) };
+            row.Controls.Add(label);
+            int x = indent + label.PreferredWidth + 6;
+            var box = new TextBox { Location = new Point(x, 2), Width = w - 100 - x };
+            var browse = new Button { Text = "Br&owse...", Location = new Point(w - 92, 0), Size = new Size(92, 27) };
+            browse.Click += (s, e) =>
+            {
+                using (var d = new FolderBrowserDialog { Description = "Choose your Rocket League folder (the one with TAGame in it).", ShowNewFolderButton = false })
+                {
+                    if (Directory.Exists(box.Text)) d.SelectedPath = box.Text;
+                    if (d.ShowDialog(this) != DialogResult.OK) return;
+                    string p = Util.ResolveRocketLeague(d.SelectedPath);
+                    if (p == null) MessageBox.Show(this, "There is no Rocket League in " + d.SelectedPath + ". Choose the folder that contains TAGame (Steam: steamapps\\common\\rocketleague).", "RLMM Setup", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    else box.Text = p;
+                }
+            };
+            row.Controls.Add(box);
+            row.Controls.Add(browse);
+            parent.Controls.Add(row);
+            return box;
+        }
+
+        /// <summary>Checks a Rocket League folder box: empty is fine (setup then finds it), anything else must hold Rocket League.</summary>
+        bool ValidateRocketLeague(TextBox box)
+        {
+            if (box.Text.Trim().Length == 0) return true;
+            string p = Util.ResolveRocketLeague(box.Text);
+            if (p != null) { box.Text = p; return true; }
+            string problem = "There is no Rocket League in " + box.Text.Trim() + ". Choose the folder that contains TAGame (Steam: steamapps\\common\\rocketleague), or clear the box to let setup look for it.";
+            if (Program.SelfTestDir == null) MessageBox.Show(this, problem, "RLMM Setup", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            else Log(problem);
+            return false;
         }
 
         CheckBox Check(Control parent, string text, bool on)
@@ -166,7 +210,7 @@ namespace RLMMSetup
             comps = new ListView
             {
                 View = View.Details, FullRowSelect = true, HeaderStyle = ColumnHeaderStyle.Nonclickable, MultiSelect = false,
-                Size = new Size(w, 196), Margin = new Padding(0, 10, 0, 0),
+                Size = new Size(w, 150), Margin = new Padding(0, 10, 0, 0),
             };
             comps.Columns.Add("Component");
             comps.Columns.Add("Installed");
@@ -174,6 +218,9 @@ namespace RLMMSetup
             comps.Columns.Add("Action");
             st.Controls.Add(comps);
             updStatus = Para(st, "", w, 10);
+            Para(st, "Map testing: double-clicking a saved .udk map copies it over Utopia Retro in this Rocket League:", w, 14);
+            rlUpdBox = RocketLeagueRow(st, w, 0, out _);
+            rlUpdBox.TextChanged += (s, e) => { if (current == Pg.Update) UpdateNextButton(); };
         }
 
         void BuildProgress()
@@ -252,6 +299,7 @@ namespace RLMMSetup
             back.Enabled = true;
             next.Text = "&Install";
             next.Enabled = true;
+            if (rlBox.Text.Length == 0) rlBox.Text = Util.FindRocketLeague().FirstOrDefault() ?? "";
             if (dirBox.Text.Length == 0)
             {
                 string d = @"C:\UDK\RLMM";
@@ -267,6 +315,8 @@ namespace RLMMSetup
             ShowPage(pUpdate, "Updates", "Installed components compared with the latest versions");
             back.Enabled = true;
             updIntro.Text = "UDK is installed at " + targetDir + ".";
+            rlSaved = Util.SavedRocketLeague(targetDir);
+            rlUpdBox.Text = Util.ResolveRocketLeague(rlSaved) ?? Util.FindRocketLeague().FirstOrDefault() ?? "";   // saved one gone: the one found
             SizeColumns();
             if (string.Equals(targetDir, detectedDir, StringComparison.OrdinalIgnoreCase) && detectedRows.Count > 0)
             {
@@ -308,11 +358,11 @@ namespace RLMMSetup
                     if (rAccept.Checked) GoLocation();
                     break;
                 case Pg.Location:
-                    if (ValidateFolder()) StartRun(true);
+                    if (ValidateFolder() && (!cRocket.Checked || ValidateRocketLeague(rlBox))) StartRun(true);
                     break;
                 case Pg.Update:
                     if (nothingToDo) { exitAllowed = true; Close(); }
-                    else StartRun(checkMode == "resume");
+                    else if (ValidateRocketLeague(rlUpdBox)) StartRun(checkMode == "resume");
                     break;
                 case Pg.Finish:
                     if (cLaunch.Visible && cLaunch.Checked && Util.ShortcutPointsInto(Util.DesktopShortcut, targetDir)) Util.OpenAsUser(Util.DesktopShortcut);
@@ -486,6 +536,7 @@ namespace RLMMSetup
             }
             next.Enabled = true;
             nothingToDo = false;
+            upToDate = false;
             if (err != null) { updStatus.Text = "Could not check for updates: " + err; next.Enabled = false; return; }
             if (mode == "resume")
             {
@@ -493,17 +544,23 @@ namespace RLMMSetup
                 updStatus.Text = "";
                 next.Text = "&Install";
             }
-            else if (todo == 0)
-            {
-                updStatus.Text = "Everything is up to date.";
-                next.Text = "&Close";
-                nothingToDo = true;
-            }
+            else if (todo == 0) { upToDate = true; UpdateNextButton(); }
             else
             {
                 updStatus.Text = (todo == 1 ? "1 component" : todo + " components") + " will be installed, updated or repaired. Your maps are not touched.";
                 next.Text = "&Update";
             }
+        }
+
+        /// <summary>Everything up to date: Close, unless the Rocket League folder was changed (then Apply sets it up).</summary>
+        void UpdateNextButton()
+        {
+            if (!upToDate) return;
+            string want = Util.ResolveRocketLeague(rlUpdBox.Text);
+            bool changed = rlUpdBox.Text.Trim().Length > 0 && !string.Equals(want ?? rlUpdBox.Text.Trim(), rlSaved ?? "", StringComparison.OrdinalIgnoreCase);
+            nothingToDo = !changed;
+            next.Text = changed ? "&Apply" : "&Close";
+            updStatus.Text = changed ? "Everything is up to date. Apply sets up map testing for the Rocket League folder below." : "Everything is up to date.";
         }
 
         // ------------------------------------------------------------------------------------------ install / update run
@@ -523,6 +580,9 @@ namespace RLMMSetup
                 if (!cRocket.Checked) args.Add("-SkipRocketLeague");
                 if (cKeep.Checked) args.Add("-KeepDownloads");
             }
+            // the Rocket League folder from the page this run started on (empty: setup uses the saved or found one)
+            string rl = (updating ? rlUpdBox : cRocket.Checked ? rlBox : null)?.Text.Trim();
+            if (!string.IsNullOrEmpty(rl)) { args.Add("-RocketLeagueDir"); args.Add(rl); }
             if (Program.CacheDir != null) { args.Add("-CacheDir"); args.Add(Program.CacheDir); }
 
             current = Pg.Progress;
@@ -734,7 +794,7 @@ namespace RLMMSetup
                 var t = new StringBuilder();
                 if (!ok) t.Append("Not installed: " + string.Join(", ", failed) + ". Run RLMM Setup again to retry.\n\n");
                 t.Append("UDK is installed at " + targetDir + ".\n\n");
-                t.Append("For a stadium, start with File > New Level > Soccar Template, or Mannfield Template (Aceman3000's Complexity). To play a map in Rocket League, drag the saved .udk onto \"Test map in Rocket League.bat\" in the Maps folder.\n\n");
+                t.Append("For a stadium, start with File > New Level > Soccar Template, or Mannfield Template (Aceman3000's Complexity). To play a map in Rocket League, double-click the saved .udk file, then pick Free Play > Utopia Retro in the game.\n\n");
                 t.Append("Opening a stadium template (or any map built on Rocket League's assets) shows \"Load Errors\" and \"Updating Changed Materials\". That is normal: click OK on the errors and Cancel on the materials. Never resave the dummy asset packages: UDK can't save them and crashes. To update or repair them, use Start > RLMM > Update RLMM.");
                 fText.Text = t.ToString();
                 cLaunch.Visible = File.Exists(Util.DesktopShortcut) && Util.ShortcutPointsInto(Util.DesktopShortcut, targetDir);
@@ -800,6 +860,7 @@ namespace RLMMSetup
                     dirBox.Text = Program.SelfTestDir;
                     cKeep.Checked = true;
                     Util.Snapshot(this, "3-location");
+                    if (Program.PagesOnly) { exitAllowed = true; Close(); return; }
                     GoNext();
                     if (current != Pg.Progress) { exitAllowed = true; Close(); return; }
                     stStage = 3;
@@ -820,6 +881,7 @@ namespace RLMMSetup
                 case 10:
                     if (checkRunner != null && checkRunner.Running) return;
                     Util.Snapshot(this, "5-update");
+                    if (Program.PagesOnly) { exitAllowed = true; Close(); return; }
                     GoNext();
                     stStage = current == Pg.Progress ? 3 : 99;
                     return;

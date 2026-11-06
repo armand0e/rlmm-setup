@@ -3,7 +3,7 @@
 
     Installs UDK 2015 (the editor Rocket League maps are built in) and sets it up for Rocket League: compiled dummy
     classes, dummy assets, Not So Dummy Assets, the map templates (Soccar, Mannfield, Hoops, Dropshot, Test) with
-    Aceman3000's Misc assets, a drag-and-drop "test in Rocket League" script and shortcuts.
+    Aceman3000's Misc assets, map testing in Rocket League (double-click a saved .udk map) and shortcuts.
 
     Run it again any time: when UDK is already installed it compares every component with the latest upstream version
     and offers to update what changed.
@@ -20,6 +20,7 @@
         -KeepDownloads        keep the downloaded installer and zips (about 9 GB)
         -SkipPrerequisites    skip the Visual C++ 2010 and DirectX 9 runtimes
         -SkipRocketLeague     do not touch the Rocket League folder
+        -RocketLeagueDir <p>  the Rocket League folder to test maps in (default: found automatically, or remembered)
         -CheckOnly            only report installed vs latest versions
         -Local <folder>       use sources.json, assets\ and templates\ from this copy of the repo instead of GitHub
                               (automatic when install.ps1 runs from a copy of the repo: test edits before pushing)
@@ -39,6 +40,7 @@ function Invoke-RLMMSetup {
         [switch]$KeepDownloads,
         [switch]$SkipPrerequisites,
         [switch]$SkipRocketLeague,
+        [string]$RocketLeagueDir,
         [switch]$CheckOnly,
         [switch]$NoElevate,
         [switch]$Elevated,
@@ -1251,62 +1253,175 @@ class RLMMSubStream : Stream {
     # Rocket League testing and shortcuts
     # --------------------------------------------------------------------------------------------------------
     function Find-RocketLeague {
+        # Steam (every library folder) and Epic installs: @{ Store; Path }, Path = the folder with TAGame in it.
         $hits = New-Object System.Collections.Generic.List[object]
-        try {
-            $steam = [string](Get-ItemProperty -Path 'HKCU:\Software\Valve\Steam' -ErrorAction Stop).SteamPath
-            $libs = New-Object System.Collections.Generic.List[string]; $libs.Add($steam)
-            $vdf = Join-Path $steam 'steamapps\libraryfolders.vdf'
-            if (Test-Path -LiteralPath $vdf) { foreach ($m in [regex]::Matches([IO.File]::ReadAllText($vdf), '"path"\s+"([^"]+)"')) { $libs.Add($m.Groups[1].Value.Replace('\\', '\')) } }
-            foreach ($l in ($libs | Select-Object -Unique)) {
-                $p = Join-Path $l 'steamapps\common\rocketleague'
-                if (Test-Path -LiteralPath (Join-Path $p 'TAGame\CookedPCConsole')) { $hits.Add(@{ Store = 'Steam'; Path = (Resolve-Path -LiteralPath $p).Path }) }
-            }
-        } catch { }
+        $steams = New-Object System.Collections.Generic.List[string]
+        # HKLM first: it has the path in its real case (HKCU's SteamPath is lower case)
+        foreach ($k in @(@('HKLM:\SOFTWARE\WOW6432Node\Valve\Steam', 'InstallPath'), @('HKLM:\SOFTWARE\Valve\Steam', 'InstallPath'), @('HKCU:\Software\Valve\Steam', 'SteamPath'))) {
+            try { $v = [string](Get-ItemProperty -Path $k[0] -ErrorAction Stop).($k[1]); if ($v) { $steams.Add($v.Replace('/', '\')) } } catch { }
+        }
+        foreach ($steam in ($steams | Select-Object -Unique)) {
+            try {
+                $libs = New-Object System.Collections.Generic.List[string]; $libs.Add($steam)
+                $vdf = Join-Path $steam 'steamapps\libraryfolders.vdf'
+                if (Test-Path -LiteralPath $vdf) { foreach ($m in [regex]::Matches([IO.File]::ReadAllText($vdf), '"path"\s+"([^"]+)"')) { $libs.Add($m.Groups[1].Value.Replace('\\', '\')) } }
+                foreach ($l in ($libs | Select-Object -Unique)) {
+                    $p = Resolve-RocketLeagueDir (Join-Path $l 'steamapps\common\rocketleague')
+                    if ($p -and -not @($hits | Where-Object { $_.Path -ieq $p }).Count) { $hits.Add(@{ Store = 'Steam'; Path = $p }) }
+                }
+            } catch { }
+        }
         try {
             $dat = Join-Path $env:ProgramData 'Epic\UnrealEngineLauncher\LauncherInstalled.dat'
             if (Test-Path -LiteralPath $dat) {
                 foreach ($a in ([IO.File]::ReadAllText($dat) | ConvertFrom-Json).InstallationList) {
-                    if ($a.AppName -eq 'Sugar' -and (Test-Path -LiteralPath (Join-Path $a.InstallLocation 'TAGame\CookedPCConsole'))) { $hits.Add(@{ Store = 'Epic'; Path = [string]$a.InstallLocation }) }
+                    $p = if ($a.AppName -eq 'Sugar') { Resolve-RocketLeagueDir ([string]$a.InstallLocation) } else { $null }
+                    if ($p) { $hits.Add(@{ Store = 'Epic'; Path = $p }) }
                 }
             }
         } catch { }
         return ,$hits
     }
 
-    function Set-RocketLeagueTools([string]$Dest) {
-        $rls = Find-RocketLeague
+    function Resolve-RocketLeagueDir([string]$Path) {
+        # The Rocket League folder for whatever was given: that folder, TAGame, CookedPCConsole, Binaries\Win64 or
+        # RocketLeague.exe. $null when there is no Rocket League there.
+        $p = ([string]$Path).Trim().Trim('"').TrimEnd('\')
+        if (-not $p) { return $null }
+        try { $p = [IO.Path]::GetFullPath($p) } catch { return $null }
+        if ($p -like '*.exe') { $p = Split-Path -Parent $p }
+        for ($i = 0; $i -lt 3 -and $p; $i++) {
+            if (Test-Path -LiteralPath (Join-Path $p 'TAGame\CookedPCConsole')) { return $p.TrimEnd('\') }
+            $p = Split-Path -Parent $p
+        }
+        return $null
+    }
+
+    function Select-RocketLeague($State) {
+        # -RocketLeagueDir, else the folder chosen last time (if Rocket League is still there), else the one found;
+        # asks when several are found or none (console only). Returns the folder, or $null to skip map testing.
+        if ($RocketLeagueDir) {
+            $p = Resolve-RocketLeagueDir $RocketLeagueDir
+            if (-not $p) { throw "No Rocket League in $RocketLeagueDir (it should contain TAGame\CookedPCConsole)." }
+            return $p
+        }
+        if ($State.ContainsKey('RocketLeagueDir') -and $State.RocketLeagueDir) {
+            $p = Resolve-RocketLeagueDir $State.RocketLeagueDir
+            if ($p) { return $p }
+            Info "Rocket League is no longer in $($State.RocketLeagueDir); looking for it again."
+        }
+        $found = @(Find-RocketLeague)
+        $quiet = $Yes -or $script:Wiz
+        if ($found.Count -eq 1 -or ($found.Count -gt 1 -and $quiet)) { return $found[0].Path }
+        if ($found.Count -gt 1) {
+            Say ''; Say '  Rocket League is installed in more than one place:' White
+            for ($i = 0; $i -lt $found.Count; $i++) { Info ('{0}) {1} ({2})' -f ($i + 1), $found[$i].Path, $found[$i].Store) }
+            $pick = (Read-Host '      Number of the one to test maps in [1]').Trim()
+            if ($pick -match '^\d+$' -and [int]$pick -ge 1 -and [int]$pick -le $found.Count) { return $found[[int]$pick - 1].Path }
+            return $found[0].Path
+        }
+        if ($quiet -or $State.ContainsKey('RocketLeagueDir')) { return $null }   # skipped on an earlier run
+        Say ''; Say '  Rocket League was not found (Steam or Epic).' White
+        while ($true) {
+            $a = (Read-Host '      Its folder (the one with TAGame in it), or Enter to skip map testing').Trim()
+            if (-not $a) { return '' }
+            $p = Resolve-RocketLeagueDir $a
+            if ($p) { return $p }
+            Info "No Rocket League in $a."
+        }
+    }
+
+    function Get-OemEncoding {
+        # Batch files are read in the console's OEM code page: paths with accented letters need it.
+        return [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
+    }
+
+    function Set-RocketLeagueTools([string]$Dest, [string]$RlDir) {
         $tools = Join-Path $Dest 'RLMM-Setup'
         $maps = Join-Path $Dest 'UDKGame\Content\Maps'
         New-Item -ItemType Directory -Force -Path $maps, $tools | Out-Null
-        if ($rls.Count -eq 0) { Warn 'Rocket League not found (Steam or Epic). Map testing tools were skipped; run the command again after installing it.'; return }
-        $rl = $rls[0]
-        $cooked = Join-Path $rl.Path 'TAGame\CookedPCConsole'
-        Info "Rocket League ($($rl.Store)): $($rl.Path)"
+        $old = Join-Path $maps 'Test map in Rocket League.bat'                 # replaced by UtopiaOverwrite.bat
+        if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Force }
+        if (-not $RlDir) { Warn 'Rocket League not found (Steam or Epic): map testing was skipped. Run setup again with -RocketLeagueDir <folder>, or from RLMM-Setup.exe, to set it up.'; return }
+        $cooked = Join-Path $RlDir 'TAGame\CookedPCConsole'
+        Info "Rocket League: $RlDir"
         New-Item -ItemType Directory -Force -Path (Join-Path $cooked 'mods') | Out-Null
         $utopia = Join-Path $cooked 'Labs_Utopia_P.upk'
         $backup = Join-Path $tools 'Labs_Utopia_P.original.upk'
         if (-not (Test-Path -LiteralPath $backup) -and (Test-Path -LiteralPath $utopia)) { Copy-Item -LiteralPath $utopia -Destination $backup; Info 'Backed up Labs_Utopia_P.upk (Utopia Retro, the map used for testing)' }
-        # Rocket League's folder often needs admin rights to write to; the helper asks for them only when a plain copy fails.
+        # Steam's folder is writable for users, Epic's (under Program Files) is not: when a plain copy is refused, this
+        # helper copies with administrator rights (one Windows prompt).
         $helper = Join-Path $tools 'Copy-ToRocketLeague.ps1'
         [IO.File]::WriteAllText($helper, @'
 param([string]$Source, [string]$Target, [string]$Done, [switch]$Elevated)
+# Copies a file into Rocket League's folder, asking for administrator rights only when a plain copy is refused.
 try {
     Copy-Item -LiteralPath $Source -Destination $Target -Force -ErrorAction Stop
-    Write-Host $Done -ForegroundColor Green
+    if ($Done -and -not $Elevated) { Write-Host $Done -ForegroundColor Green }
+    exit 0
 } catch {
     if ($Elevated) { Write-Host "Copy failed: $($_.Exception.Message)" -ForegroundColor Red; Read-Host 'Press Enter'; exit 1 }
-    Start-Process powershell -Verb RunAs -Wait -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"",
-        '-Source', "`"$Source`"", '-Target', "`"$Target`"", '-Done', "`"$Done`"", '-Elevated')
+    try {
+        $p = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"",
+            '-Source', "`"$Source`"", '-Target', "`"$Target`"", '-Elevated')
+    } catch { Write-Host 'Administrator rights were not granted, so nothing was copied.' -ForegroundColor Yellow; exit 1 }
+    if ($p.ExitCode -eq 0 -and $Done) { Write-Host $Done -ForegroundColor Green }
+    exit $p.ExitCode
 }
 '@)
         $run = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$helper`""
-        $test = "@echo off`r`nrem Drag a saved .udk map onto this file to play it in Rocket League as Utopia Retro.`r`n" +
-            "if `"%~1`"==`"`" ( echo Drag a saved .udk map file onto this script. & pause & exit /b 1 )`r`n" +
-            "$run -Source `"%~1`" -Target `"$utopia`" -Done `"%~nx1 is now Utopia Retro. In Rocket League: Free Play, Utopia Retro (no restart needed).`"`r`npause`r`n"
+        # The classic UtopiaOverwrite.bat, with this PC's Rocket League folder (rewritten by every setup run).
+        $bat = Join-Path $maps 'UtopiaOverwrite.bat'
+        $overwrite = @(
+            '@echo off'
+            'rem UtopiaOverwrite: plays a saved .udk map in Rocket League as Utopia Retro (Free Play > Utopia Retro).'
+            'rem Double-click a .udk file, or drag one onto this file. RLMM Setup writes your Rocket League folder below and'
+            'rem rewrites this file on every run: to change the folder, run RLMM Setup (or Start menu > RLMM > Update) again.'
+            'if "%~1"=="" ( echo Double-click a saved .udk map, or drag one onto this file. & pause & exit /b 1 )'
+            'echo "%~1"'
+            "echo F|xcopy /y `"%~1`" `"$utopia`""
+            'if not errorlevel 1 goto copied'
+            'rem Not allowed to write there (Rocket League under Program Files): copy with administrator rights instead.'
+            "$run -Source `"%~1`" -Target `"$utopia`""
+            'if errorlevel 1 ( pause & exit /b 1 )'
+            ':copied'
+            'echo "%~nx1" is now Utopia Retro. In Rocket League: Free Play, Utopia Retro.'
+            'timeout /t 5 >nul'
+        ) -join "`r`n"
         $restore = "@echo off`r`n$run -Source `"$backup`" -Target `"$utopia`" -Done `"Utopia Retro restored.`"`r`npause`r`n"
-        [IO.File]::WriteAllText((Join-Path $maps 'Test map in Rocket League.bat'), $test)
-        [IO.File]::WriteAllText((Join-Path $tools 'Restore Utopia Retro.bat'), $restore)
-        Good 'To test a map, drag the saved .udk onto "Test map in Rocket League.bat" in the Maps folder'
+        [IO.File]::WriteAllText($bat, $overwrite + "`r`n", (Get-OemEncoding))
+        [IO.File]::WriteAllText((Join-Path $tools 'Restore Utopia Retro.bat'), $restore, (Get-OemEncoding))
+        Set-UdkFileAssociation $bat (Join-Path $RlDir 'Binaries\Win64\RocketLeague.exe')
+        Good 'Double-click a saved .udk map to play it in Rocket League as Utopia Retro (UtopiaOverwrite.bat in the Maps folder)'
+    }
+
+    function Set-UdkFileAssociation([string]$Bat, [string]$IconExe) {
+        # .udk files open with UtopiaOverwrite.bat (for this Windows user). A different app the user picked before
+        # ("Always use this app") is cleared, or Windows would keep using it.
+        $cls = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Classes\RLMM.UDKMap')
+        try {
+            $cls.SetValue('', 'UDK map (Rocket League)')
+            $icon = if (Test-Path -LiteralPath $IconExe) { "`"$IconExe`",0" } else { "$env:SystemRoot\System32\imageres.dll,-68" }
+            $k = $cls.CreateSubKey('DefaultIcon'); $k.SetValue('', $icon); $k.Close()
+            $k = $cls.CreateSubKey('shell'); $k.SetValue('', 'open'); $k.Close()
+            $k = $cls.CreateSubKey('shell\open'); $k.SetValue('', 'Play in Rocket League (Utopia Retro)'); $k.Close()
+            $k = $cls.CreateSubKey('shell\open\command'); $k.SetValue('', "`"$Bat`" `"%1`""); $k.Close()
+        } finally { $cls.Close() }
+        $ext = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Classes\.udk')
+        try { $ext.SetValue('', 'RLMM.UDKMap') } finally { $ext.Close() }
+        $uc = 'Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.udk\UserChoice'
+        $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($uc)
+        if ($k) {
+            $prog = [string]$k.GetValue('ProgId'); $k.Close()
+            if ($prog -ne 'RLMM.UDKMap') {
+                try { [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($uc, $false); Info ".udk files opened with $prog before; they now open with UtopiaOverwrite.bat" }
+                catch { Warn 'Windows keeps another app for .udk files: right-click a .udk file > Open with > Choose another app > UtopiaOverwrite.bat, with "Always" ticked.' }
+            }
+        }
+        if (-not ('RLMM.Shell' -as [type])) {
+            Add-Type -Namespace RLMM -Name Shell -MemberDefinition '[DllImport("shell32.dll")] public static extern void SHChangeNotify(int e, uint f, IntPtr a, IntPtr b);'
+        }
+        [RLMM.Shell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)   # SHCNE_ASSOCCHANGED: refresh icons
     }
 
     function New-Shortcut([string]$Path, [string]$Target, [string]$Arguments = '', [string]$WorkDir = '', [string]$Icon = '') {
@@ -1556,8 +1671,20 @@ try {
     New-Item -Path 'HKCU:\Software\RLMM-Setup' -Force | Out-Null
     Set-ItemProperty -Path 'HKCU:\Software\RLMM-Setup' -Name 'InstallDir' -Value $InstallDir
 
+    # ---- Rocket League (map testing): chosen now, so any question comes before the long downloads
+    $rlDir = $null
+    $rlTools = $isAdmin -and -not $SkipRocketLeague
+    if ($rlTools) {
+        $rlDir = Select-RocketLeague $state
+        if ($null -ne $rlDir) { $state.RocketLeagueDir = $rlDir }   # '' = skipped by the user, not asked again
+    }
+
     if ($mode -eq 'update') {
-        if ($todo.Count -eq 0) { Say ''; Good 'Everything is up to date.'; return }
+        if ($todo.Count -eq 0) {
+            Say ''; Good 'Everything is up to date.'
+            if ($rlTools) { Set-RocketLeagueTools $InstallDir $rlDir; Save-State $InstallDir $state }   # keeps UtopiaOverwrite.bat current
+            return
+        }
         Say ''
         if (-not (Ask ('Update {0} component(s) now?' -f $todo.Count) 'y')) { Say '  Nothing changed.'; return }
     }
@@ -1687,7 +1814,7 @@ try {
 
     Step 'Rocket League testing and shortcuts'
     if ($SkipRocketLeague) { Info 'Rocket League folder left alone (-SkipRocketLeague)' }
-    elseif ($isAdmin) { Set-RocketLeagueTools $InstallDir }
+    elseif ($rlTools) { Set-RocketLeagueTools $InstallDir $rlDir }
     $self = Join-Path $InstallDir 'RLMM-Setup\install.ps1'
     [IO.File]::WriteAllText($self, (Get-RLMMScriptText), [Text.Encoding]::UTF8)
     if ($isAdmin) { Set-Shortcuts $InstallDir }
@@ -1701,6 +1828,7 @@ try {
     Say '  ================================================================' DarkCyan
     Info "UDK: $InstallDir"
     Info 'Start "UDK - Rocket League" from the desktop. For a stadium: File > New Level > Soccar Template, or Mannfield Template (Complexity).'
+    if ($rlDir) { Info 'To play a map in Rocket League, double-click the saved .udk file, then Free Play > Utopia Retro.' }
     Info 'Run this command again any time (or Start menu > RLMM > Update) to update classes and assets.'
     if ($script:Warnings.Count -gt 0) { Say ''; Say '  Warnings:' Yellow; foreach ($w in $script:Warnings) { Info $w } }
 }

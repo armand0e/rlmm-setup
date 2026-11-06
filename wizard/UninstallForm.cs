@@ -148,7 +148,7 @@ namespace RLMMSetup
             if (!Directory.Exists(maps)) return;
             var stock = StockFiles();
             var files = Directory.GetFiles(maps, "*", SearchOption.AllDirectories)
-                .Where(f => !string.Equals(Path.GetFileName(f), "Test map in Rocket League.bat", StringComparison.OrdinalIgnoreCase))
+                .Where(f => !new[] { "Test map in Rocket League.bat", "UtopiaOverwrite.bat" }.Contains(Path.GetFileName(f), StringComparer.OrdinalIgnoreCase))
                 .Where(f => !stock.Contains(f.Substring(dir.Length + 1).Replace('\\', '/')))
                 .ToList();
             if (files.Count == 0) return;
@@ -227,7 +227,26 @@ namespace RLMMSetup
                 Registry.CurrentUser.DeleteSubKeyTree(@"Software\RLMM-Setup", false);
             }
             catch { }
+            RemoveUdkAssociation();
         }
+
+        /// <summary>.udk files stop opening with this install's UtopiaOverwrite.bat (setup set that up per user).</summary>
+        void RemoveUdkAssociation()
+        {
+            try
+            {
+                string cmd;
+                using (var k = Registry.CurrentUser.OpenSubKey(@"Software\Classes\RLMM.UDKMap\shell\open\command")) cmd = k?.GetValue("") as string;
+                if (cmd == null || cmd.IndexOf(dir.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase) < 0) return;   // another install's
+                Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\RLMM.UDKMap", false);
+                using (var ext = Registry.CurrentUser.OpenSubKey(@"Software\Classes\.udk", true))
+                    if (ext != null && (ext.GetValue("") as string) == "RLMM.UDKMap") ext.DeleteValue("", false);
+                SHChangeNotify(0x08000000, 0, IntPtr.Zero, IntPtr.Zero);
+            }
+            catch { }
+        }
+
+        [System.Runtime.InteropServices.DllImport("shell32.dll")] static extern void SHChangeNotify(int e, uint f, IntPtr a, IntPtr b);
 
         void DeleteFolder()
         {
