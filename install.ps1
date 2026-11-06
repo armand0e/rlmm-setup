@@ -653,9 +653,20 @@ class RLMMSubStream : Stream {
         $log = Join-Path $Dest "RLMM-Setup\logs\$LogName.log"
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $log) | Out-Null
         $exePath = Join-Path $Dest $Exe
-        $p = Start-Process -FilePath $exePath -ArgumentList $Arguments -WorkingDirectory (Split-Path -Parent $exePath) `
-            -RedirectStandardOutput $log -RedirectStandardError "$log.err" -PassThru
-        if (-not $p.WaitForExit($TimeoutMinutes * 60000)) { try { $p.Kill() } catch { }; throw "UDK $($Arguments[0]) did not finish within $TimeoutMinutes minutes (log: $log)" }
+        # Through cmd.exe with CreateNoWindow: UDK.com is a console program, and Start-Process would give it a console
+        # window of its own (the wizard runs this script without one). cmd writes its output to the log files.
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = Join-Path $env:SystemRoot 'System32\cmd.exe'
+        $psi.Arguments = '/d /s /c ""{0}" {1} >"{2}" 2>"{2}.err""' -f $exePath, ($Arguments -join ' '), $log
+        $psi.WorkingDirectory = Split-Path -Parent $exePath
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+        $p = [System.Diagnostics.Process]::Start($psi)
+        if (-not $p.WaitForExit($TimeoutMinutes * 60000)) {
+            & (Join-Path $env:SystemRoot 'System32\taskkill.exe') /T /F /PID $p.Id 2>&1 | Out-Null
+            throw "UDK $($Arguments[0]) did not finish within $TimeoutMinutes minutes (log: $log)"
+        }
         $text = ''
         if (Test-Path -LiteralPath $log) { $text = [IO.File]::ReadAllText($log) }
         return @{ Exit = $p.ExitCode; Log = $log; Text = $text }
