@@ -1539,8 +1539,10 @@ try {
         if ($l) { $needs = (-not $have) -or ([string]$have.Version -ne [string]$l.Version) }
         $flag = if (-not $needs) { 'ok' } elseif ($have) { 'update' } else { 'install' }
         # Same version, but packages missing or changed on disk (UDK resaved one, or it was deleted): repair them.
-        if ($l -and -not $needs -and $have -and $have.ContainsKey('Sizes')) {
-            $bad = Get-BadContentFiles $InstallDir $have
+        if ($l -and -not $needs -and $have) {
+            $bad = 0
+            if ($c.Kind -eq 'folder') { $bad = @($l.Files | Where-Object { $fi = New-Object IO.FileInfo((Join-Path (Join-Path $InstallDir $_.To) $_.Name)); -not $fi.Exists -or $fi.Length -ne $_.Size }).Count }
+            elseif ($have.ContainsKey('Sizes')) { $bad = Get-BadContentFiles $InstallDir $have }
             if ($bad -gt 0) { $needs = $true; $flag = 'repair'; $latLabel = "$latLabel ($bad files)" }
         }
         $color = if ($needs) { 'Yellow' } else { 'Gray' }
