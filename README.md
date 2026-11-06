@@ -27,8 +27,9 @@ Both do the same thing (the wizard runs the same script); use whichever you pref
   doesn't re-index thousands of packages at every start.
 - **Not So Dummy Assets**, plus the classic **dummy assets**. The dummy assets only fill in packages the Not So Dummy
   Assets don't have, so no package name is ever ambiguous.
-- **Aceman3000's map templates** (File > New Level): Soccar, Mannfield (his Complexity stadium), Hoops, Dropshot and
-  Test, with the cubemap fix he asked for, plus his **Misc** assets so boost pads and goal crossbar physics work.
+- **Map templates** (File > New Level): Soccar, Hoops, Dropshot and Test by Mr. Swaggles, and Mannfield (Aceman3000's
+  Complexity stadium), all with the cubemap fix; plus Aceman3000's **Misc** assets so boost pads and goal crossbar
+  physics work.
 - **Rocket League testing:** your Steam or Epic install is found automatically and Utopia Retro is backed up. Drag a
   saved map onto `Test map in Rocket League.bat` in your Maps folder to play it.
 - **Shortcuts:** "UDK - Rocket League" on the desktop, and Start menu > RLMM (editor, maps folder, update, restore Utopia).
@@ -80,16 +81,33 @@ Run as a file to pass options:
 | `-SkipPrerequisites`, `-SkipRocketLeague` | Leave the runtimes, or the Rocket League folder, alone |
 | `-AcceptEula`, `-Yes` | Unattended installs (only accept the EULA if you have read it) |
 
-## Building the wizard
+## For maintainers
 
-`wizard\` holds RLMM-Setup.exe's source (C#, .NET Framework 4.8, which Windows 10 and 11 include). It embeds
-`install.ps1` and `assets\Misc.zip`, so rebuild it after changing either:
+| Path | What it is |
+|---|---|
+| `install.ps1` | The whole setup: one PowerShell function, in sections (sources, downloads, UDK base install, dummy classes, content packages, map templates, Rocket League testing, main) |
+| `Install-RLMM.bat` | Double-click launcher for a downloaded copy of the repo |
+| `wizard\` | RLMM-Setup.exe (C#, .NET Framework 4.8): a wizard that runs `install.ps1` and shows its progress |
+| `assets\Misc.zip` | Aceman3000's Misc packages (embedded in the exe) |
+| `assets\Templates.zip` | The map templates (downloaded from this repo at install time) |
+| `tools\` | Python scripts that build `Templates.zip` |
+
+**Building the wizard.** It embeds `install.ps1` and `assets\Misc.zip`, so rebuild it after changing either. Building
+needs the .NET SDK; running the exe needs nothing extra. The exe lands in `dist\`.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File wizard\build.ps1
 ```
 
-The exe lands in `dist\`. Building needs the .NET SDK; running the exe needs nothing extra.
+**Rebuilding the map templates.** `tools\make_templates_zip.py` takes the template pack, its `EditorMapTemplates.int`
+and UDK_RL_Setup's `MapTemplateIndex.upk`, and writes `Templates.zip`. On the way it sets "Max Capture Time" to 2 on
+every cubemap (`patch_cubemap.py`) and adds Mannfield and Dropshot to the New Level list (`add_template_meta.py`).
+Both edit the packages directly rather than resaving them in UDK, which could drop Rocket League properties the dummy
+classes don't know. Then put the printed Size and Md5 into `MapTemplates` in `install.ps1`.
+
+```powershell
+python tools\make_templates_zip.py Templates.zip EditorMapTemplates.int MapTemplateIndex.upk assets\Templates.zip
+```
 
 ## Where everything comes from
 
@@ -98,12 +116,13 @@ The exe lands in `dist\`. Building needs the .NET SDK; running the exe needs not
 | UDK 2015-02 installer | Google Drive (the mirror rocketleaguemapmaking.com links), archive.org as fallback; MD5 and Epic's signature are verified |
 | Dummy classes | [RocketLeagueMapmaking/RL-Dummy-Classes](https://github.com/RocketLeagueMapmaking/RL-Dummy-Classes) merged with [ghostrider-05/RL-dummy-classes2](https://github.com/ghostrider-05/RL-dummy-classes2), latest commits |
 | Not So Dummy Assets, dummy assets | [RocketLeagueMapmaking](https://github.com/RocketLeagueMapmaking) on GitHub, latest commit (Not So Dummy Assets file by file from Git LFS, 16 downloads at a time) |
-| Map templates | Aceman3000, bundled in this repo with his permission (`assets/Templates.zip`); the cubemap fix is applied by `tools/patch_cubemap.py`, and `tools/add_template_meta.py` adds Mannfield and Dropshot to UDK_RL_Setup's New Level index |
+| Map templates | Mr. Swaggles (Soccar, Hoops, Dropshot, Test) and Aceman3000 (Mannfield; he also polished Dropshot), bundled in this repo (`assets/Templates.zip`); New Level thumbnails from [UDK_RL_Setup](https://github.com/RocketLeagueMapmaking/UDK_RL_Setup) |
 | Misc assets | Aceman3000, bundled in this repo with his permission (`assets/Misc.zip`) |
 
 The UDK EULA belongs to Epic Games. Setup shows it, straight from the installer, before anything is downloaded.
 
 ## Credits
 
-The RocketLeagueMapmaking community and [rocketleaguemapmaking.com](https://rocketleaguemapmaking.com); Mr. Swaggles'
-UDK_RL_Setup, which this replaces; Aceman3000 for the map templates (Complexity among them) and the Misc assets; ghostrider-05 for the generated dummy classes.
+The RocketLeagueMapmaking community and [rocketleaguemapmaking.com](https://rocketleaguemapmaking.com); Mr. Swaggles
+for UDK_RL_Setup, which this replaces, and the map templates; Aceman3000 for Mannfield (Complexity), his work on the
+Dropshot template and the Misc assets; ghostrider-05 for the generated dummy classes.

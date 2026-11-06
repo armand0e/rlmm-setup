@@ -2,8 +2,8 @@
     RLMM Setup: one command to install UDK for Rocket League map making.
 
     Installs UDK 2015 (the editor Rocket League maps are built in) and sets it up for Rocket League: compiled dummy
-    classes, dummy assets, Not So Dummy Assets, Aceman3000's map templates (Soccar, Mannfield/Complexity, Hoops,
-    Dropshot, Test) with his Misc assets, a drag-and-drop "test in Rocket League" script and shortcuts.
+    classes, dummy assets, Not So Dummy Assets, the map templates (Soccar, Mannfield, Hoops, Dropshot, Test) with
+    Aceman3000's Misc assets, a drag-and-drop "test in Rocket League" script and shortcuts.
 
     Run it again any time: when UDK is already installed it compares every component with the latest upstream version
     and offers to update what changed.
@@ -83,11 +83,10 @@ function Invoke-RLMMSetup {
         MiscAssets   = @{ Title = 'Misc assets (boost pads, crossbar)'; Kind = 'file'; File = 'Misc.zip'; Size = [long]4435
                           Md5 = '00143177BF26D54BADD34DFEA80D7CFD'; Url = "$RepoRaw/assets/Misc.zip"; Version = 'v1.0.6' }
         DummyAssets  = @{ Title = 'Dummy assets (gap fill)'; Kind = 'github'; Repo = 'RocketLeagueMapmaking/RL_DummyAssets'; Approx = [long]102MB }
-        # Aceman3000's template pack (Soccar, Mannfield = Complexity, Hoops, Dropshot, Test) with the cubemap fix he
-        # asked for: MaxCaptureTime 2 on every SceneCaptureCubeMapComponent (tools\patch_cubemap.py). New Level only
-        # lists templates that have an entry in MapTemplateIndex.upk, so the pack also carries UDK_RL_Setup's index
-        # with entries added for Mannfield and Dropshot (tools\add_template_meta.py; they reuse the Soccar thumbnail).
-        MapTemplates = @{ Title = 'Map templates (Aceman3000)'; Kind = 'file'; File = 'Templates.zip'; Size = [long]14275065
+        # Map templates: Soccar, Hoops, Dropshot and Test by Mr. Swaggles (Dropshot polished by Aceman3000), Mannfield
+        # by Aceman3000 (his Complexity stadium). Built by tools\make_templates_zip.py, which applies the cubemap fix
+        # (MaxCaptureTime 2) and adds Mannfield and Dropshot to UDK_RL_Setup's New Level index (MapTemplateIndex.upk).
+        MapTemplates = @{ Title = 'Map templates'; Kind = 'file'; File = 'Templates.zip'; Size = [long]14275065
                           Md5 = 'E6F360169D1FB56977FACB54CB0885F2'; Url = "$RepoRaw/assets/Templates.zip"; Version = '2026-11 cubemap fix' }
     }
 
@@ -250,6 +249,41 @@ class RLMMSubStream : Stream {
 '@
     }
 
+    function Expand-Archive2([string]$ZipPath, [scriptblock]$Map, [bool]$StripTopFolder = $true) {
+        # $Map gets the path inside the archive (top folder stripped for GitHub zips) and returns a destination or $null.
+        $written = New-Object System.Collections.Generic.List[string]
+        $zip = New-Object RLMMZip($ZipPath)
+        try {
+            $files = @($zip.Entries | Where-Object { -not $_.IsDirectory })
+            $i = 0; $tick = [Diagnostics.Stopwatch]::StartNew()
+            foreach ($e in $files) {
+                $i++
+                $inner = $e.Name
+                if ($StripTopFolder -and $inner.IndexOf('/') -ge 0) { $inner = $inner.Substring($inner.IndexOf('/') + 1) }
+                $dest = & $Map $inner
+                if (-not $dest) { continue }
+                [void]$zip.Extract($e, $dest)
+                $written.Add($dest)
+                if ($tick.ElapsedMilliseconds -gt 400) { Status ('Extracting... {0,3}%  ({1:N0} of {2:N0})' -f [int](100 * $i / $files.Count), $i, $files.Count); $tick.Restart() }
+            }
+            EndStatus
+        } finally { $zip.Dispose() }
+        return ,$written
+    }
+
+    function Remove-Obsolete([string]$Dest, $OldRel, $NewAbs, [string]$OnlyUnderAbs) {
+        if (-not $OldRel) { return 0 }
+        $keep = @{}; foreach ($f in $NewAbs) { $keep[(Get-Rel $Dest $f).ToLowerInvariant()] = $true }
+        $n = 0
+        foreach ($rel in @($OldRel)) {
+            if ($keep.ContainsKey(([string]$rel).ToLowerInvariant())) { continue }
+            $abs = Join-Path $Dest $rel
+            if (-not $abs.StartsWith($OnlyUnderAbs + '\', [StringComparison]::OrdinalIgnoreCase)) { continue }
+            if (Test-Path -LiteralPath $abs) { Remove-Item -LiteralPath $abs -Force; $n++ }
+        }
+        return $n
+    }
+
     # --------------------------------------------------------------------------------------------------------
     # Downloads: curl.exe ships with Windows 10 (1803+) and 11 and gives resume, redirects and a progress bar.
     # --------------------------------------------------------------------------------------------------------
@@ -343,6 +377,18 @@ class RLMMSubStream : Stream {
                 -Headers @{ 'User-Agent' = 'RLMM-Setup'; 'Accept' = 'application/vnd.github+json' }
             return @{ Sha = [string]$c.sha; Date = ([datetime]$c.commit.committer.date).ToString('yyyy-MM-dd') }
         } catch { return $null }
+    }
+
+    function Get-BundledFile($c, [string]$What) {
+        # A file kept in this repo's assets\ folder: copied from a local checkout (or the wizard) when it matches,
+        # downloaded from GitHub otherwise.
+        $zip = Join-Path $CacheDir $c.File
+        $bundled = if ($LocalAssets) { Join-Path $LocalAssets $c.File } else { $null }
+        if ($bundled -and -not (Test-Path -LiteralPath $zip) -and (Test-Path -LiteralPath $bundled) -and (Get-FileHash -LiteralPath $bundled -Algorithm MD5).Hash -eq $c.Md5) {
+            Copy-Item -LiteralPath $bundled -Destination $zip
+        }
+        Get-Download @($c.Url) $zip $c.Size $c.Md5 $What
+        return $zip
     }
 
     # --------------------------------------------------------------------------------------------------------
@@ -582,10 +628,8 @@ class RLMMSubStream : Stream {
         }
     }
 
-    # The EULA acceptance record, where UDK.exe (64-bit) and UnSetup.exe (32-bit) look for it: both registry views
-    # (the 64-bit copy is hidden from Apps & features so UDK is listed once) plus Binaries\InstallInfo.xml.
-    # When run by RLMM-Setup.exe, a copy of it lives in the install: it is the Update shortcut and the uninstaller.
     function Get-SetupExeCopy([string]$Dest) {
+        # When run by RLMM-Setup.exe, a copy of it lives in the install: it is the Update shortcut and the uninstaller.
         if (-not $SetupExe -or -not (Test-Path -LiteralPath $SetupExe)) { return $null }
         $copy = Join-Path $Dest 'RLMM-Setup\RLMM-Setup.exe'
         if ([IO.Path]::GetFullPath($SetupExe) -ine $copy) {
@@ -596,6 +640,8 @@ class RLMMSubStream : Stream {
     }
 
     function Register-UdkInstall([string]$Dest) {
+        # The EULA acceptance record, where UDK.exe (64-bit) and UnSetup.exe (32-bit) look for it: both registry views
+        # (the 64-bit copy is hidden from Apps & features so UDK is listed once) plus Binaries\InstallInfo.xml.
         $setupCopy = Get-SetupExeCopy $Dest
         $infoPath = Join-Path $Dest 'Binaries\InstallInfo.xml'
         $guid = $null
@@ -649,6 +695,9 @@ class RLMMSubStream : Stream {
         Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
     }
 
+    # --------------------------------------------------------------------------------------------------------
+    # Running UDK: commandlets without a console window, script compile, Content Browser index
+    # --------------------------------------------------------------------------------------------------------
     function Invoke-UdkProcess([string]$Dest, [string]$Exe, [string[]]$Arguments, [string]$LogName, [int]$TimeoutMinutes) {
         $log = Join-Path $Dest "RLMM-Setup\logs\$LogName.log"
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $log) | Out-Null
@@ -681,16 +730,24 @@ class RLMMSubStream : Stream {
         else { Info 'Configuration will be generated during the script compile' }
     }
 
+    function Invoke-Make([string]$Dest) {
+        # Recompiles every script package (-full: make otherwise trusts file timestamps). Adds Ok and Summary.
+        $r = Invoke-UdkProcess $Dest 'Binaries\Win64\UDK.com' @('make', '-full', '-unattended', '-nopause', '-nopauseonsuccess') 'make' 30
+        $m = [regex]::Match($r.Text, 'Success - (\d+) error\(s\), (\d+) warning\(s\)')
+        $r.Ok = $m.Success -and $m.Groups[1].Value -eq '0'
+        $r.Summary = if ($r.Ok) { 'Scripts compiled (0 errors, {0} warnings; the warnings are normal for the dummy classes)' -f $m.Groups[2].Value } else { '' }
+        return $r
+    }
+
     function Invoke-ScriptCompile([string]$Dest) {
         Status 'Compiling UnrealScript (make -full), about a minute...'
-        $r = Invoke-UdkProcess $Dest 'Binaries\Win64\UDK.com' @('make', '-full', '-unattended', '-nopause', '-nopauseonsuccess') 'make' 30
+        $r = Invoke-Make $Dest
         EndStatus
-        $m = [regex]::Match($r.Text, 'Success - (\d+) error\(s\), (\d+) warning\(s\)')
-        if (-not $m.Success -or $m.Groups[1].Value -ne '0') {
+        if (-not $r.Ok) {
             $errs = @([regex]::Matches($r.Text, '(?m)^.*(Error|error ).*$') | Select-Object -First 8 | ForEach-Object { $_.Value.Trim() })
             throw ("Script compile failed. First errors:`n        " + ($errs -join "`n        ") + "`n      Full log: $($r.Log)")
         }
-        Good ("Scripts compiled (0 errors, {0} warnings; the warnings are normal for the dummy classes)" -f $m.Groups[2].Value)
+        Good $r.Summary
     }
 
     function Update-AssetDatabase([string]$Dest) {
@@ -714,43 +771,8 @@ class RLMMSubStream : Stream {
     }
 
     # --------------------------------------------------------------------------------------------------------
-    # Rocket League components
+    # Dummy classes
     # --------------------------------------------------------------------------------------------------------
-    function Expand-Archive2([string]$ZipPath, [scriptblock]$Map, [bool]$StripTopFolder = $true) {
-        # $Map gets the path inside the archive (top folder stripped for GitHub zips) and returns a destination or $null.
-        $written = New-Object System.Collections.Generic.List[string]
-        $zip = New-Object RLMMZip($ZipPath)
-        try {
-            $files = @($zip.Entries | Where-Object { -not $_.IsDirectory })
-            $i = 0; $tick = [Diagnostics.Stopwatch]::StartNew()
-            foreach ($e in $files) {
-                $i++
-                $inner = $e.Name
-                if ($StripTopFolder -and $inner.IndexOf('/') -ge 0) { $inner = $inner.Substring($inner.IndexOf('/') + 1) }
-                $dest = & $Map $inner
-                if (-not $dest) { continue }
-                [void]$zip.Extract($e, $dest)
-                $written.Add($dest)
-                if ($tick.ElapsedMilliseconds -gt 400) { Status ('Extracting... {0,3}%  ({1:N0} of {2:N0})' -f [int](100 * $i / $files.Count), $i, $files.Count); $tick.Restart() }
-            }
-            EndStatus
-        } finally { $zip.Dispose() }
-        return ,$written
-    }
-
-    function Remove-Obsolete([string]$Dest, $OldRel, $NewAbs, [string]$OnlyUnderAbs) {
-        if (-not $OldRel) { return 0 }
-        $keep = @{}; foreach ($f in $NewAbs) { $keep[(Get-Rel $Dest $f).ToLowerInvariant()] = $true }
-        $n = 0
-        foreach ($rel in @($OldRel)) {
-            if ($keep.ContainsKey(([string]$rel).ToLowerInvariant())) { continue }
-            $abs = Join-Path $Dest $rel
-            if (-not $abs.StartsWith($OnlyUnderAbs + '\', [StringComparison]::OrdinalIgnoreCase)) { continue }
-            if (Test-Path -LiteralPath $abs) { Remove-Item -LiteralPath $abs -Force; $n++ }
-        }
-        return $n
-    }
-
     function Set-EditPackages([string]$Dest) {
         $f = Join-Path $Dest 'UDKGame\Config\DefaultEngine.ini'
         $lines = New-Object System.Collections.Generic.List[string]
@@ -858,13 +880,15 @@ class RLMMSubStream : Stream {
         $src = Join-Path $Dest 'Development\Src'
         $work = Join-Path $Dest 'RLMM-Setup\classes-merge'
         if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
-        foreach ($side in @(@{ Zip = $BaseZip; Dir = (Join-Path $work 'base') }, @{ Zip = $GenZip; Dir = (Join-Path $work 'gen') })) {
-            $script:ClassRoot = $side.Dir
-            [void](Expand-Archive2 $side.Zip {
+        # base = community classes, gen = generated classes; each extracted to its own folder
+        foreach ($side in 'base', 'gen') {
+            $into = Join-Path $work $side
+            $zipPath = if ($side -eq 'base') { $BaseZip } else { $GenZip }
+            [void](Expand-Archive2 $zipPath {
                 param($inner)
                 if ($inner -like 'Src/*') { $inner = $inner.Substring(4) }          # repos that keep classes under Src/
                 if ($inner -notmatch '^[^/]+/Classes/[^/]+\.uc$') { return $null }   # only <Package>/Classes/*.uc (no README, CI...)
-                return Join-Path $script:ClassRoot $inner.Replace('/', '\')
+                return Join-Path $into $inner.Replace('/', '\')
             })
         }
         $plan = @{ Base = (Get-ClassFileNames (Join-Path $work 'base')); Gen = (Get-ClassFileNames (Join-Path $work 'gen')); Choice = @{}; Defs = $null }
@@ -887,10 +911,9 @@ class RLMMSubStream : Stream {
         $ok = $false
         for ($round = 1; $round -le 8; $round++) {
             Status ('Compiling the merged dummy classes{0}...' -f $(if ($round -gt 1) { " (round $round)" } else { '' }))
-            $r = Invoke-UdkProcess $Dest 'Binaries\Win64\UDK.com' @('make', '-full', '-unattended', '-nopause', '-nopauseonsuccess') 'make' 30
+            $r = Invoke-Make $Dest
             EndStatus
-            $mm = [regex]::Match($r.Text, 'Success - (\d+) error\(s\), (\d+) warning\(s\)')
-            if ($mm.Success -and $mm.Groups[1].Value -eq '0') { $ok = $true; break }
+            if ($r.Ok) { $ok = $true; break }
             if ((Resolve-ClassErrors $src $plan $r.Text) -eq 0) { break }
             $written = Write-MergedClasses $src $plan
         }
@@ -898,7 +921,7 @@ class RLMMSubStream : Stream {
         $dropped = @($plan.Choice.Keys | Where-Object { $plan.Choice[$_] -eq 'drop' }).Count
         if ($ok) {
             $script:ClassesCompiled = $true
-            Good ('Scripts compiled (0 errors, {0} warnings; the warnings are normal for the dummy classes)' -f $mm.Groups[2].Value)
+            Good $r.Summary
         } else {
             Warn 'The two dummy class sets could not be merged; installing the generated classes alone (spawn and boost pad icons may be missing in the editor).'
             foreach ($rel in @($plan.Choice.Keys)) { $plan.Choice[$rel] = if ($plan.Gen.ContainsKey($rel)) { 'gen' } else { 'drop' } }
@@ -922,6 +945,9 @@ class RLMMSubStream : Stream {
         return $written
     }
 
+    # --------------------------------------------------------------------------------------------------------
+    # Content packages: Not So Dummy Assets, dummy assets, Misc
+    # --------------------------------------------------------------------------------------------------------
     function Get-PackageNames([string]$Dest, [string]$ExceptUnder) {
         $names = @{}
         foreach ($dir in (Join-Path $Dest 'UDKGame\Content'), (Join-Path $Dest 'Engine\Content')) {
@@ -1123,18 +1149,9 @@ class RLMMSubStream : Stream {
         }
     }
 
-    function Get-BundledFile($c, [string]$What) {
-        # A file kept in this repo's assets\ folder: copied from a local checkout (or the wizard) when it matches,
-        # downloaded from GitHub otherwise.
-        $zip = Join-Path $CacheDir $c.File
-        $bundled = if ($LocalAssets) { Join-Path $LocalAssets $c.File } else { $null }
-        if ($bundled -and -not (Test-Path -LiteralPath $zip) -and (Test-Path -LiteralPath $bundled) -and (Get-FileHash -LiteralPath $bundled -Algorithm MD5).Hash -eq $c.Md5) {
-            Copy-Item -LiteralPath $bundled -Destination $zip
-        }
-        Get-Download @($c.Url) $zip $c.Size $c.Md5 $What
-        return $zip
-    }
-
+    # --------------------------------------------------------------------------------------------------------
+    # Map templates
+    # --------------------------------------------------------------------------------------------------------
     function Install-MapTemplates([string]$Dest, [string]$ZipPath) {
         $tplDir = Join-Path $Dest 'Engine\Content\Maps\Templates'
         $int = Join-Path $Dest 'Engine\Localization\INT\EditorMapTemplates.int'
@@ -1154,6 +1171,9 @@ class RLMMSubStream : Stream {
         return $written
     }
 
+    # --------------------------------------------------------------------------------------------------------
+    # Rocket League testing and shortcuts
+    # --------------------------------------------------------------------------------------------------------
     function Find-RocketLeague {
         $hits = New-Object System.Collections.Generic.List[object]
         try {

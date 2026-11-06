@@ -1,3 +1,4 @@
 wizard/bin/
 wizard/obj/
 dist/
+__pycache__/
