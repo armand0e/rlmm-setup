@@ -2,8 +2,8 @@
     RLMM Setup: one command to install UDK for Rocket League map making.
 
     Installs UDK 2015 (the editor Rocket League maps are built in) and sets it up for Rocket League: compiled dummy
-    classes, dummy assets, Not So Dummy Assets, Aceman3000's Complexity stadium as the Soccar template with its Misc
-    assets, a drag-and-drop "test in Rocket League" script and shortcuts.
+    classes, dummy assets, Not So Dummy Assets, Aceman3000's map templates (Soccar, Mannfield/Complexity, Hoops,
+    Dropshot, Test) with his Misc assets, a drag-and-drop "test in Rocket League" script and shortcuts.
 
     Run it again any time: when UDK is already installed it compares every component with the latest upstream version
     and offers to update what changed.
@@ -47,7 +47,7 @@ function Invoke-RLMMSetup {
     $ProgressPreference = 'SilentlyContinue'
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-    $SetupVersion = '1.0.1'
+    $SetupVersion = '1.1.0'
     $DefaultInstallDir = 'C:\UDK\RLMM'
     $RepoRaw = 'https://raw.githubusercontent.com/armand0e/rlmm-setup/main'
 
@@ -67,23 +67,28 @@ function Invoke-RLMMSetup {
         # shown before the 2 GB download.
         EulaOffset = [long]21659229; EulaCompressed = [long]41421; EulaCrc = [uint32]606909622
     }
-    # Order matters: Not So Dummy Assets and Misc before the classic dummy assets (which only fill gaps), and
-    # Complexity before Templates (the template step uses it as the Soccar map).
+    # Order matters: Not So Dummy Assets and Misc before the classic dummy assets (which only fill gaps).
     $Components = [ordered]@{
         # Approx: typical archive size, only for progress display (GitHub archives are sent without a length).
-        # ghostrider-05's classes are generated from the current Rocket League build. The NSDA packages use classes
-        # (ProductAsset_*, WheelAsset*, ThumbnailRenderer_TA...) that RocketLeagueMapmaking/RL-Dummy-Classes lacks;
-        # without them UDK logs ~30,000 load warnings and re-indexes the assets on every editor start.
-        DummyClasses = @{ Title = 'Dummy classes'; Kind = 'github'; Repo = 'ghostrider-05/RL-dummy-classes2'; Approx = [long]4MB }
+        # Dummy classes are a merge of two repos. RocketLeagueMapmaking/RL-Dummy-Classes is hand-made for the editor:
+        # sprites for spawns and boost pads, the goal and FX subobjects that the stadium packages and templates
+        # reference. ghostrider-05/RL-dummy-classes2 is generated from the current Rocket League build and has the
+        # ~1,400 classes the first one lacks (ProductAsset_*, WheelAsset*...); without those UDK logs ~30,000 load
+        # warnings and re-indexes the assets at every start. The community classes win wherever both have a class,
+        # except where that breaks the compile (Install-DummyClasses). Raise Merge when the merge rules change.
+        DummyClasses = @{ Title = 'Dummy classes'; Kind = 'classes'; Repo = 'RocketLeagueMapmaking/RL-Dummy-Classes'
+                          Generated = 'ghostrider-05/RL-dummy-classes2'; Merge = 1; Approx = [long]4MB }
         NotSoDummy   = @{ Title = 'Not So Dummy Assets'; Kind = 'github'; Repo = 'RocketLeagueMapmaking/RL_NotSoDummyAssets'; Approx = [long]3307434166
                           Fallback = 'https://rocketleaguemapmaking.com/resources/RL_NotSoDummyAssets-main.zip' }
         MiscAssets   = @{ Title = 'Misc assets (boost pads, crossbar)'; Kind = 'file'; File = 'Misc.zip'; Size = [long]4435
                           Md5 = '00143177BF26D54BADD34DFEA80D7CFD'; Url = "$RepoRaw/assets/Misc.zip"; Version = 'v1.0.6' }
         DummyAssets  = @{ Title = 'Dummy assets (gap fill)'; Kind = 'github'; Repo = 'RocketLeagueMapmaking/RL_DummyAssets'; Approx = [long]102MB }
-        Complexity   = @{ Title = 'Complexity stadium (Aceman3000)'; Kind = 'bakkes'; Page = 'https://bakkesplugins.com/maps/339'
-                          Url = 'https://cdn.bakkesplugins.com/uploads/380fa8e4af7945c89031b8303eb93200-1.0.6.zip'
-                          Version = '1.0.6'; UdkMd5 = 'CE8F327221FBB757FA55FDB164597712' }
-        Templates    = @{ Title = 'New Map templates'; Kind = 'github'; Repo = 'RocketLeagueMapmaking/UDK_RL_Setup'; Approx = [long]8MB }
+        # Aceman3000's template pack (Soccar, Mannfield = Complexity, Hoops, Dropshot, Test) with the cubemap fix he
+        # asked for: MaxCaptureTime 2 on every SceneCaptureCubeMapComponent (tools\patch_cubemap.py). New Level only
+        # lists templates that have an entry in MapTemplateIndex.upk, so the pack also carries UDK_RL_Setup's index
+        # with entries added for Mannfield and Dropshot (tools\add_template_meta.py; they reuse the Soccar thumbnail).
+        MapTemplates = @{ Title = 'Map templates (Aceman3000)'; Kind = 'file'; File = 'Templates.zip'; Size = [long]14275065
+                          Md5 = 'E6F360169D1FB56977FACB54CB0885F2'; Url = "$RepoRaw/assets/Templates.zip"; Version = '2026-11 cubemap fix' }
     }
 
     # --------------------------------------------------------------------------------------------------------
@@ -757,20 +762,140 @@ class RLMMSubStream : Stream {
         return $true
     }
 
-    function Install-DummyClasses([string]$Dest, [string]$ZipPath, $Old) {
-        $src = Join-Path $Dest 'Development\Src'
-        $written = Expand-Archive2 $ZipPath {
-            param($inner)
-            if ($inner -like 'Src/*') { $inner = $inner.Substring(4) }          # repos that keep classes under Src/
-            if ($inner -notmatch '^[^/]+/Classes/[^/]+\.uc$') { return $null }   # only <Package>/Classes/*.uc (no README, CI...)
-            return Join-Path $src $inner.Replace('/', '\')
+    # Where the community class (RL-Dummy-Classes) and the generated one (RL-dummy-classes2) can't both win. Found by
+    # compiling the merge (2026-11-05); Install-DummyClasses re-checks with the compiler, so upstream changes are
+    # handled at install time and these only save compile rounds.
+    $ClassesFromGenerated = @('Core\Classes\_Types_Core.uc', 'ProjectX\Classes\_Types_X.uc', 'ProjectX\Classes\ActorComponent_X.uc',
+        'TAGame\Classes\_Types_TA.uc', 'TAGame\Classes\Car_TA.uc', 'TAGame\Classes\GameEvent_Soccar_TA.uc', 'TAGame\Classes\PRI_TA.uc',
+        'TAGame\Classes\ProductAsset_Body_TA.uc', 'TAGame\Classes\ProductAsset_Bot_TA.uc', 'TAGame\Classes\ProductSlot_TA.uc',
+        'TAGame\Classes\Replay_TA.uc', 'TAGame\Classes\SaveData_TA.uc', 'TAGame\Classes\TutorialSave_TA.uc', 'TAGame\Classes\Vehicle_TA.uc')
+    # community-only classes that Rocket League no longer has and that clash with the generated types
+    $ClassesDropped = @('TAGame\Classes\PlayerTitle_TA.uc', 'TAGame\Classes\ProductReference_TA.uc', 'TAGame\Classes\ProductReferenceArray_TA.uc')
+
+    function Get-ClassFileNames([string]$Root) {
+        # 'Pkg\Classes\File.uc' -> full path, for one extracted classes repo
+        $m = @{}
+        if (Test-Path -LiteralPath $Root) {
+            foreach ($f in Get-ChildItem -LiteralPath $Root -Recurse -Filter *.uc) { $m[(Get-Rel $Root $f.FullName)] = $f.FullName }
         }
+        return $m
+    }
+
+    function Write-MergedClasses([string]$Src, $Plan) {
+        # Copies each file's chosen version into Development\Src with a fresh timestamp (make compares timestamps).
+        # The generated repo declares placeholder structs in __Automated_*.uc for types it doesn't generate; any that
+        # the community classes define as real classes are removed, or the two clash.
+        $now = Get-Date
+        $realClasses = @{}
+        foreach ($rel in $Plan.Choice.Keys) { if ($Plan.Choice[$rel] -eq 'base') { $realClasses[[IO.Path]::GetFileNameWithoutExtension($rel)] = $true } }
+        $written = New-Object System.Collections.Generic.List[string]
+        foreach ($rel in $Plan.Choice.Keys) {
+            $dest = Join-Path $Src $rel
+            $choice = $Plan.Choice[$rel]
+            if ($choice -eq 'drop') { if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Force }; continue }
+            $from = if ($choice -eq 'base') { $Plan.Base[$rel] } else { $Plan.Gen[$rel] }
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dest) | Out-Null
+            if ([IO.Path]::GetFileName($rel) -like '__Automated*') {
+                $txt = [IO.File]::ReadAllText($from)
+                $txt = [regex]::Replace($txt, '(?m)^\s*struct\s+(\w+)\s*\{\s*\};[ \t]*\r?\n', { param($m) if ($realClasses.ContainsKey($m.Groups[1].Value)) { '' } else { $m.Value } })
+                [IO.File]::WriteAllText($dest, $txt)
+            } else { Copy-Item -LiteralPath $from -Destination $dest -Force }
+            (Get-Item -LiteralPath $dest).LastWriteTime = $now
+            $written.Add($dest)
+        }
+        return ,$written
+    }
+
+    function Resolve-ClassErrors([string]$Src, $Plan, [string]$MakeText) {
+        # One step of the merge repair: for each compile error, give way to the generated version of the community
+        # file that causes it (the one defining the missing type or parent template), or drop a community-only class
+        # that no longer fits. Returns the number of decisions changed.
+        if (-not $Plan.Defs) {
+            $Plan.Defs = @{}
+            foreach ($rel in $Plan.Choice.Keys) {
+                if (-not $Plan.Gen.ContainsKey($rel) -or -not $Plan.Base.ContainsKey($rel)) { continue }
+                $txt = [IO.File]::ReadAllText($Plan.Gen[$rel])
+                $names = @([IO.Path]::GetFileNameWithoutExtension($rel))
+                $names += [regex]::Matches($txt, '(?im)^\s*(?:enum|struct(?:\s+(?:native|transient|immutable|immutablewhencooked|atomic|atomicwhencooked|strictconfig|export|init))*)\s+(\w+)') | ForEach-Object { $_.Groups[1].Value }
+                $names += [regex]::Matches($txt, '(?im)^\s*(?:var|function|event|delegate|const)\b[^;{(]*?\b(\w+)\s*(?:[;(=\[]|$)') | ForEach-Object { $_.Groups[1].Value }
+                foreach ($n in $names) { if (-not $Plan.Defs.ContainsKey($n)) { $Plan.Defs[$n] = New-Object System.Collections.Generic.List[string] }; if (-not $Plan.Defs[$n].Contains($rel)) { $Plan.Defs[$n].Add($rel) } }
+            }
+        }
+        $changed = 0
+        $seen = @{}
+        foreach ($m in [regex]::Matches($MakeText, '([A-Za-z]:\\[^\r\n:]+?\.uc)\((\d+)\) : Error, ([^\r\n]+)')) {
+            $file = $m.Groups[1].Value; $msg = $m.Groups[3].Value
+            if ($seen.ContainsKey("$file|$msg")) { continue }; $seen["$file|$msg"] = $true
+            try { $file = [IO.Path]::GetFullPath($file) } catch { }
+            $rel = Get-Rel $Src $file
+            $names = @([regex]::Matches($msg, "'(\w+)'") | ForEach-Object { $_.Groups[1].Value })
+            if ($msg -match 'parent class (\w+)') { $names += $Matches[1] }
+            if ($msg -match 'cannot expand' -and (Test-Path -LiteralPath $file) -and ([IO.File]::ReadAllText($file) -match '(?i)\bclass\s+\w+\s+extends\s+(\w+)')) { $names += $Matches[1] }
+            $done = $false
+            foreach ($n in $names) {
+                if (-not $Plan.Defs.ContainsKey($n)) { continue }
+                foreach ($r in $Plan.Defs[$n]) { if ($Plan.Choice[$r] -eq 'base') { $Plan.Choice[$r] = 'gen'; $changed++; $done = $true } }
+            }
+            if ($done -or -not $Plan.Choice.ContainsKey($rel) -or $Plan.Choice[$rel] -ne 'base') { continue }
+            $Plan.Choice[$rel] = if ($Plan.Gen.ContainsKey($rel)) { 'gen' } else { 'drop' }
+            $changed++
+        }
+        return $changed
+    }
+
+    function Install-DummyClasses([string]$Dest, [string]$BaseZip, [string]$GenZip, $Old) {
+        $src = Join-Path $Dest 'Development\Src'
+        $work = Join-Path $Dest 'RLMM-Setup\classes-merge'
+        if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
+        foreach ($side in @(@{ Zip = $BaseZip; Dir = (Join-Path $work 'base') }, @{ Zip = $GenZip; Dir = (Join-Path $work 'gen') })) {
+            $script:ClassRoot = $side.Dir
+            [void](Expand-Archive2 $side.Zip {
+                param($inner)
+                if ($inner -like 'Src/*') { $inner = $inner.Substring(4) }          # repos that keep classes under Src/
+                if ($inner -notmatch '^[^/]+/Classes/[^/]+\.uc$') { return $null }   # only <Package>/Classes/*.uc (no README, CI...)
+                return Join-Path $script:ClassRoot $inner.Replace('/', '\')
+            })
+        }
+        $plan = @{ Base = (Get-ClassFileNames (Join-Path $work 'base')); Gen = (Get-ClassFileNames (Join-Path $work 'gen')); Choice = @{}; Defs = $null }
+        if ($plan.Base.Count -eq 0 -or $plan.Gen.Count -eq 0) { throw 'A dummy classes download contained no classes.' }
+        foreach ($rel in $plan.Gen.Keys) { $plan.Choice[$rel] = 'gen' }
+        foreach ($rel in $plan.Base.Keys) { $plan.Choice[$rel] = 'base' }
+        foreach ($rel in $ClassesFromGenerated) { if ($plan.Gen.ContainsKey($rel) -and $plan.Base.ContainsKey($rel)) { $plan.Choice[$rel] = 'gen' } }
+        foreach ($rel in $ClassesDropped) { if ($plan.Base.ContainsKey($rel) -and -not $plan.Gen.ContainsKey($rel)) { $plan.Choice[$rel] = 'drop' } }
+
+        $written = Write-MergedClasses $src $plan
         # Files upstream removed are deleted only from the Rocket League packages; Core, Engine and GFxUI files
         # overlay stock UDK files and are left alone.
         $removed = 0
         if ($Old -and $Old.ContainsKey('Files')) {
             foreach ($pkg in 'AKAudio', 'ProjectX', 'TAGame') { $removed += Remove-Obsolete $Dest $Old.Files $written (Join-Path $src $pkg) }
         }
+        if (Set-EditPackages $Dest) { Info 'Registered AKAudio, ProjectX and TAGame in DefaultEngine.ini' }
+
+        # Compile now: the merge is only right once the compiler agrees. Repair rounds, then the generated set alone.
+        $ok = $false
+        for ($round = 1; $round -le 8; $round++) {
+            Status ('Compiling the merged dummy classes{0}...' -f $(if ($round -gt 1) { " (round $round)" } else { '' }))
+            $r = Invoke-UdkProcess $Dest 'Binaries\Win64\UDK.com' @('make', '-full', '-unattended', '-nopause', '-nopauseonsuccess') 'make' 30
+            EndStatus
+            $mm = [regex]::Match($r.Text, 'Success - (\d+) error\(s\), (\d+) warning\(s\)')
+            if ($mm.Success -and $mm.Groups[1].Value -eq '0') { $ok = $true; break }
+            if ((Resolve-ClassErrors $src $plan $r.Text) -eq 0) { break }
+            $written = Write-MergedClasses $src $plan
+        }
+        $fromGen = @($plan.Choice.Keys | Where-Object { $plan.Choice[$_] -eq 'gen' -and $plan.Base.ContainsKey($_) }).Count
+        $dropped = @($plan.Choice.Keys | Where-Object { $plan.Choice[$_] -eq 'drop' }).Count
+        if ($ok) {
+            $script:ClassesCompiled = $true
+            Good ('Scripts compiled (0 errors, {0} warnings; the warnings are normal for the dummy classes)' -f $mm.Groups[2].Value)
+        } else {
+            Warn 'The two dummy class sets could not be merged; installing the generated classes alone (spawn and boost pad icons may be missing in the editor).'
+            foreach ($rel in @($plan.Choice.Keys)) { $plan.Choice[$rel] = if ($plan.Gen.ContainsKey($rel)) { 'gen' } else { 'drop' } }
+            $written = Write-MergedClasses $src $plan
+            Invoke-ScriptCompile $Dest
+            $script:ClassesCompiled = $true
+        }
+        Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
         foreach ($c in @(
                 @{ File = 'Engine\Classes\PrimitiveComponent.uc'; Pattern = 'RBCC_BallBlocker'; Text = 'RBCC_BallBlocker' },
                 @{ File = 'Engine\Classes\Actor.uc'; Pattern = 'var\(\)\s+const\s+bool\s+bNoDelete'; Text = 'var() const bool bNoDelete' },
@@ -780,9 +905,9 @@ class RLMMSubStream : Stream {
                 Warn "Expected Rocket League change missing in $($c.File) ($($c.Text)); the dummy classes may have changed upstream."
             }
         }
-        if (Set-EditPackages $Dest) { Info 'Registered AKAudio, ProjectX and TAGame in DefaultEngine.ini' }
         $extra = if ($removed) { ", $removed obsolete removed" } else { '' }
-        Good ("Dummy classes installed ({0} files{1})" -f $written.Count, $extra)
+        $mix = if ($ok) { ('{0} community + {1} generated; {2} community classes replaced, {3} dropped' -f @($plan.Choice.Values | Where-Object { $_ -eq 'base' }).Count, @($plan.Choice.Values | Where-Object { $_ -eq 'gen' }).Count, $fromGen, $dropped) } else { 'generated only' }
+        Good ("Dummy classes installed ({0} files: {1}{2})" -f $written.Count, $mix, $extra)
         return $written
     }
 
@@ -987,28 +1112,34 @@ class RLMMSubStream : Stream {
         }
     }
 
-    function Set-TemplateNames([string]$Dest, [bool]$Complexity) {
-        $int = Join-Path $Dest 'Engine\Localization\INT\EditorMapTemplates.int'
-        if ((Test-Path -LiteralPath $int) -and -not (Test-Path -LiteralPath "$int.bak")) { Copy-Item -LiteralPath $int -Destination "$int.bak" }
-        $soccar = if ($Complexity) { 'Soccar - Complexity (Aceman3000)' } else { 'Soccar Template' }
-        [IO.File]::WriteAllText($int, "[TemplateMapMetadata.DisplayNames]`r`nTemplate_Soccar=$soccar`r`nTemplate_Hoops=Hoops Template`r`nTemplate_Test=Test Template`r`n", [Text.Encoding]::Unicode)
-        return $soccar
+    function Get-BundledFile($c, [string]$What) {
+        # A file kept in this repo's assets\ folder: copied from a local checkout (or the wizard) when it matches,
+        # downloaded from GitHub otherwise.
+        $zip = Join-Path $CacheDir $c.File
+        $bundled = if ($LocalAssets) { Join-Path $LocalAssets $c.File } else { $null }
+        if ($bundled -and -not (Test-Path -LiteralPath $zip) -and (Test-Path -LiteralPath $bundled) -and (Get-FileHash -LiteralPath $bundled -Algorithm MD5).Hash -eq $c.Md5) {
+            Copy-Item -LiteralPath $bundled -Destination $zip
+        }
+        Get-Download @($c.Url) $zip $c.Size $c.Md5 $What
+        return $zip
     }
 
-    function Install-Templates([string]$Dest, [string]$ZipPath, [bool]$HaveComplexity) {
+    function Install-MapTemplates([string]$Dest, [string]$ZipPath) {
         $tplDir = Join-Path $Dest 'Engine\Content\Maps\Templates'
+        $int = Join-Path $Dest 'Engine\Localization\INT\EditorMapTemplates.int'
         $index = Join-Path $Dest 'Engine\Content\MapTemplateIndex.upk'
         New-Item -ItemType Directory -Force -Path $tplDir | Out-Null
-        if ((Test-Path -LiteralPath $index) -and -not (Test-Path -LiteralPath "$index.bak")) { Copy-Item -LiteralPath $index -Destination "$index.bak" }
         $written = Expand-Archive2 $ZipPath {
             param($inner)
-            if ($inner -eq 'Goodies/Templates/MapTemplateIndex.upk') { return $index }
-            if ($inner -match '^Goodies/Templates/(Template_(Hoops|Test)\.umap)$') { return Join-Path $tplDir $Matches[1] }
-            if ($inner -eq 'Goodies/Templates/Template_Soccar.umap' -and -not $HaveComplexity) { return Join-Path $tplDir 'Template_Soccar.umap' }
-            return $null
-        }
-        $name = Set-TemplateNames $Dest $HaveComplexity
-        Good "File > New Level now offers: $name, Hoops, Test"
+            $to = if ($inner -match '^Template_\w+\.umap$') { Join-Path $tplDir $inner }
+                  elseif ($inner -eq 'EditorMapTemplates.int') { $int } elseif ($inner -eq 'MapTemplateIndex.upk') { $index } else { $null }
+            # keep the file it replaces the first time (UDK's own, or what an earlier setup installed)
+            if ($to -and (Test-Path -LiteralPath $to) -and -not (Test-Path -LiteralPath "$to.bak")) { Copy-Item -LiteralPath $to -Destination "$to.bak" }
+            return $to
+        } $false
+        $names = @($written | Where-Object { $_ -like '*.umap' } | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_).Substring(9) })
+        if ($names.Count -eq 0) { throw 'The template pack contained no maps.' }
+        Good ('File > New Level now offers: {0}' -f ($names -join ', '))
         return $written
     }
 
@@ -1194,14 +1325,12 @@ try {
             if (-not $h) { return $null }
             return @{ Version = $h.Sha; Label = ('{0} ({1})' -f $h.Sha.Substring(0, 7), $h.Date); Url = "https://codeload.github.com/$($c.Repo)/zip/$($h.Sha)" }
         }
-        if ($c.Kind -eq 'bakkes') {
-            # The map page links the current zip as .../uploads/<id>-<version>.zip; fall back to the pinned release.
-            try {
-                $html = (Invoke-WebRequest -UseBasicParsing -Uri $c.Page -TimeoutSec 30 -UserAgent 'RLMM-Setup').Content
-                $m = [regex]::Match($html, 'https://cdn\.bakkesplugins\.com/uploads/[0-9a-f]+-([0-9][0-9.]*)\.zip')
-                if ($m.Success) { return @{ Version = $m.Groups[1].Value; Label = 'v' + $m.Groups[1].Value; Url = $m.Value } }
-            } catch { }
-            return @{ Version = $c.Version; Label = 'v' + $c.Version; Url = $c.Url }
+        if ($c.Kind -eq 'classes') {
+            $a = Get-GitHubHead $c.Repo; $b = Get-GitHubHead $c.Generated
+            if (-not $a -or -not $b) { return $null }
+            return @{ Version = ('m{0}:{1}+{2}' -f $c.Merge, $a.Sha, $b.Sha); Label = ('{0} + {1}' -f $a.Sha.Substring(0, 7), $b.Sha.Substring(0, 7))
+                      ShaA = $a.Sha; ShaB = $b.Sha
+                      Url = "https://codeload.github.com/$($c.Repo)/zip/$($a.Sha)"; Url2 = "https://codeload.github.com/$($c.Generated)/zip/$($b.Sha)" }
         }
         if (-not $c.Url) { return $null }
         $label = if ($c.ContainsKey('Version')) { $c.Version } else { 'current' }
@@ -1285,7 +1414,7 @@ try {
         $c = $Components[$k]; $l = $latest[$k]
         $have = if ($state.Components.ContainsKey($k)) { $state.Components[$k] } else { $null }
         $haveLabel = if ($have) { [string]$have.Label } else { '-' }
-        $latLabel = if ($l) { $l.Label } elseif ($c.Kind -eq 'github') { '(GitHub unreachable)' } else { '(no download source)' }
+        $latLabel = if ($l) { $l.Label } elseif ($c.Kind -in 'github', 'classes') { '(GitHub unreachable)' } else { '(no download source)' }
         $needs = $false
         if ($l) { $needs = (-not $have) -or ([string]$have.Version -ne [string]$l.Version) }
         $flag = if (-not $needs) { 'ok' } elseif ($have) { 'update' } else { 'install' }
@@ -1324,6 +1453,7 @@ try {
 
     $script:StepTotal = $todo.Count + 2 + $(if ($baseNeeded) { 3 } else { 0 })
     $classesChanged = $false
+    $script:ClassesCompiled = $false
 
     if ($baseNeeded) {
         Step 'Downloading UDK 2015 (from Epic, archived copy)'
@@ -1361,9 +1491,11 @@ try {
         $extraState = $null
         try {
             if ($k -eq 'DummyClasses') {
-                $zip = Join-Path $CacheDir "RL-Dummy-Classes-$short.zip"; $toDelete += $zip
-                Get-Download @($l.Url) $zip 0 '' 'dummy classes'
-                $written = Install-DummyClasses $InstallDir $zip $old
+                $zipA = Join-Path $CacheDir ('RL-Dummy-Classes-{0}.zip' -f $l.ShaA.Substring(0, 7)); $toDelete += $zipA
+                $zipB = Join-Path $CacheDir ('RL-dummy-classes2-{0}.zip' -f $l.ShaB.Substring(0, 7)); $toDelete += $zipB
+                Get-Download @($l.Url) $zipA 0 '' 'dummy classes (RocketLeagueMapmaking)'
+                Get-Download @($l.Url2) $zipB 0 '' 'dummy classes (generated, ghostrider-05)'
+                $written = Install-DummyClasses $InstallDir $zipA $zipB $old
                 $classesChanged = $true
             }
             elseif ($k -eq 'NotSoDummy') {
@@ -1389,12 +1521,7 @@ try {
                 }
             }
             elseif ($k -eq 'MiscAssets') {
-                $zip = Join-Path $CacheDir $c.File
-                $bundled = if ($LocalAssets) { Join-Path $LocalAssets $c.File } else { $null }
-                if ($bundled -and -not (Test-Path -LiteralPath $zip) -and (Test-Path -LiteralPath $bundled) -and (Get-FileHash -LiteralPath $bundled -Algorithm MD5).Hash -eq $c.Md5) {
-                    Copy-Item -LiteralPath $bundled -Destination $zip
-                }
-                Get-Download @($c.Url) $zip $c.Size $c.Md5 'Misc assets'
+                $zip = Get-BundledFile $c 'Misc assets'
                 $root = Join-Path $InstallDir 'UDKGame\Content\DummyAssets\Misc'
                 $written = Expand-Archive2 $zip { param($inner) if ($inner -match '\.upk$') { return Join-Path $root ($inner.Split('/')[-1]) } } $false
                 Good ('Misc assets installed ({0} packages: boost pad effects, physical materials incl. goal posts and crossbar)' -f $written.Count)
@@ -1404,24 +1531,12 @@ try {
                 Get-Download @($l.Url) $zip 0 '' 'dummy assets'
                 $written = Install-ContentRepo $InstallDir $zip $old 'Dummy assets' 'RL_DummyAssets' $true
             }
-            elseif ($k -eq 'Complexity') {
-                $zip = Join-Path $CacheDir "Complexity-$short.zip"; $toDelete += $zip
-                Get-Download @($l.Url) $zip 0 '' "Complexity $($l.Label)"
-                $tplDir = Join-Path $InstallDir 'Engine\Content\Maps\Templates'
-                $soccar = Join-Path $tplDir 'Template_Soccar.umap'
-                New-Item -ItemType Directory -Force -Path $tplDir | Out-Null
-                if ((Test-Path -LiteralPath $soccar) -and -not (Test-Path -LiteralPath "$soccar.bak")) { Copy-Item -LiteralPath $soccar -Destination "$soccar.bak" }
-                $got = Expand-Archive2 $zip { param($inner) if ($inner -match '\.udk$') { return $soccar } } $false
-                if ($got.Count -ne 1) { throw 'The Complexity download did not contain a .udk map.' }
-                if ($l.Version -eq $c.Version -and (Get-FileHash -LiteralPath $soccar -Algorithm MD5).Hash -ne $c.UdkMd5) { throw 'The Complexity map does not match the published v1.0.6 file.' }
-                $written = @($soccar)
-                if (-not $todo.Contains('Templates')) { [void](Set-TemplateNames $InstallDir $true) }
-                Good "Soccar template is now Complexity $($l.Label) by Aceman3000"
-            }
-            elseif ($k -eq 'Templates') {
-                $zip = Join-Path $CacheDir "UDK_RL_Setup-$short.zip"; $toDelete += $zip
-                Get-Download @($l.Url) $zip 0 '' 'map templates'
-                $written = Install-Templates $InstallDir $zip $state.Components.ContainsKey('Complexity')
+            elseif ($k -eq 'MapTemplates') {
+                $zip = Get-BundledFile $c 'map templates'; $toDelete += $zip
+                $written = Install-MapTemplates $InstallDir $zip
+                # Setup 1.0.0/1.0.1 installed Complexity 1.0.6 (bakkesplugins) as the Soccar template and the rest from
+                # UDK_RL_Setup; the pack replaces both (Complexity is its Mannfield template now).
+                [void]$state.Components.Remove('Complexity'); [void]$state.Components.Remove('Templates')
             }
             $entry = @{ Version = $l.Version; Label = $l.Label; At = (Get-Date).ToString('yyyy-MM-dd') }
             if (@($written).Count -gt 0) { $entry.Files = @($written | ForEach-Object { Get-Rel $InstallDir $_ }) }
@@ -1443,10 +1558,10 @@ try {
 
     Step 'Compiling scripts and indexing assets'
     $contentChanged = @($todo | Where-Object { $_ -ne 'DummyClasses' }).Count -gt 0
-    if ($classesChanged -or -not (Test-Path -LiteralPath (Join-Path $InstallDir 'UDKGame\Script\TAGame.u'))) {
+    if (($classesChanged -and -not $script:ClassesCompiled) -or -not (Test-Path -LiteralPath (Join-Path $InstallDir 'UDKGame\Script\TAGame.u'))) {
         Invoke-ScriptCompile $InstallDir
-        Set-SurveyFix $InstallDir
-    } else { Good 'Scripts are up to date' }
+    } elseif (-not $script:ClassesCompiled) { Good 'Scripts are up to date' }
+    Set-SurveyFix $InstallDir
     if ($classesChanged -or $contentChanged -or -not (Test-Path -LiteralPath (Join-Path $InstallDir 'UDKGame\Content\GameAssetDatabase.checkpoint'))) {
         Update-AssetDatabase $InstallDir
     }
@@ -1466,7 +1581,7 @@ try {
     else { Say '    Done! UDK is ready for Rocket League map making.' Green }
     Say '  ================================================================' DarkCyan
     Info "UDK: $InstallDir"
-    Info 'Start "UDK - Rocket League" from the desktop. For a stadium: File > New Level > Soccar - Complexity.'
+    Info 'Start "UDK - Rocket League" from the desktop. For a stadium: File > New Level > Soccar Template, or Mannfield Template (Complexity).'
     Info 'Run this command again any time (or Start menu > RLMM > Update) to update classes and assets.'
     if ($script:Warnings.Count -gt 0) { Say ''; Say '  Warnings:' Yellow; foreach ($w in $script:Warnings) { Info $w } }
 }

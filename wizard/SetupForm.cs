@@ -95,7 +95,7 @@ namespace RLMMSetup
             Para(st, "\u2022  UDK 2015 (the February 2015 build) and the runtimes it needs\n" +
                      "\u2022  Dummy classes, compiled and checked\n" +
                      "\u2022  Not So Dummy Assets and the classic dummy assets\n" +
-                     "\u2022  Aceman3000's Complexity stadium as the Soccar template\n" +
+                     "\u2022  Aceman3000's map templates: Soccar, Mannfield (Complexity), Hoops, Dropshot, Test\n" +
                      "\u2022  Map testing in Rocket League, and shortcuts", w, 8);
             wStatus = Para(st, "Looking for an existing UDK install...", w, 18, Bold(9F));
             for (int i = 0; i < rUpdate.Length; i++)
@@ -734,7 +734,7 @@ namespace RLMMSetup
                 var t = new StringBuilder();
                 if (!ok) t.Append("Not installed: " + string.Join(", ", failed) + ". Run RLMM Setup again to retry.\n\n");
                 t.Append("UDK is installed at " + targetDir + ".\n\n");
-                t.Append("For a stadium, start with File > New Level > Soccar - Complexity. To play a map in Rocket League, drag the saved .udk onto \"Test map in Rocket League.bat\" in the Maps folder.\n\n");
+                t.Append("For a stadium, start with File > New Level > Soccar Template, or Mannfield Template (that is Aceman3000's Complexity). To play a map in Rocket League, drag the saved .udk onto \"Test map in Rocket League.bat\" in the Maps folder.\n\n");
                 t.Append("Opening the Soccar template (or any map built on Rocket League's assets) shows \"Load Errors\" and \"Updating Changed Materials\". That is normal: click OK on the errors and Cancel on the materials. Never resave the dummy asset packages: UDK can't save them and crashes. To update or repair them, use Start > RLMM > Update RLMM.");
                 fText.Text = t.ToString();
                 cLaunch.Visible = File.Exists(Util.DesktopShortcut) && Util.ShortcutPointsInto(Util.DesktopShortcut, targetDir);

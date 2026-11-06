@@ -19,14 +19,16 @@ Both do the same thing (the wizard runs the same script); use whichever you pref
 - **UDK 2015** (Feb 2015 build, the version Rocket League maps need), installed the way Epic's own installer does it
   with the "Empty Game" option, but with no installer windows to click through.
 - **The runtimes UDK needs:** Visual C++ 2010 and DirectX 9, installed silently, as Epic's installer does.
-- **Dummy classes** from [RL-dummy-classes2](https://github.com/ghostrider-05/RL-dummy-classes2) (generated from the current
-  Rocket League build, so the Not So Dummy Assets load without missing-class errors), copied in and compiled. Setup
-  checks the compile result for you: 0 errors, or it tells you what failed. It also builds the Content Browser index,
-  as Epic's installer does, so the editor doesn't re-index thousands of packages at every start.
+- **Dummy classes**: the community's [RL-Dummy-Classes](https://github.com/RocketLeagueMapmaking/RL-Dummy-Classes)
+  (editor icons for spawns, boost pads and goals) merged with [RL-dummy-classes2](https://github.com/ghostrider-05/RL-dummy-classes2)
+  (generated from the current Rocket League build, so the Not So Dummy Assets load without missing-class errors), then
+  compiled. Where a community class breaks the compile, setup uses the generated one instead, round by round, until
+  it compiles with 0 errors. It also builds the Content Browser index, as Epic's installer does, so the editor
+  doesn't re-index thousands of packages at every start.
 - **Not So Dummy Assets**, plus the classic **dummy assets**. The dummy assets only fill in packages the Not So Dummy
   Assets don't have, so no package name is ever ambiguous.
-- **Complexity** by Aceman3000 as the Soccar template (File > New Level), with its **Misc** assets so boost pads and
-  goal crossbar physics work.
+- **Aceman3000's map templates** (File > New Level): Soccar, Mannfield (his Complexity stadium), Hoops, Dropshot and
+  Test, with the cubemap fix he asked for, plus his **Misc** assets so boost pads and goal crossbar physics work.
 - **Rocket League testing:** your Steam or Epic install is found automatically and Utopia Retro is backed up. Drag a
   saved map onto `Test map in Rocket League.bat` in your Maps folder to play it.
 - **Shortcuts:** "UDK - Rocket League" on the desktop, and Start menu > RLMM (editor, maps folder, update, restore Utopia).
@@ -36,7 +38,7 @@ You answer three questions at most: the UDK license (you can read it first), the
 
 ## Normal warnings in UDK
 
-Opening the Soccar template, or any map built on Rocket League's assets, shows a **Load Errors** list and an
+Opening a stadium template, or any map built on Rocket League's assets, shows a **Load Errors** list and an
 **Updating Changed Materials** prompt. Both are expected: the dummy assets are stand-ins for Rocket League's files and
 reference things UDK doesn't have. Click **OK** on the errors and **Cancel** on the materials prompt. Never resave
 the dummy asset packages (EuroStadium_P, GameInfo_Soccar_SF and so on): UDK fails to save them and crashes. If one
@@ -94,9 +96,9 @@ The exe lands in `dist\`. Building needs the .NET SDK; running the exe needs not
 | Component | Source |
 |---|---|
 | UDK 2015-02 installer | Google Drive (the mirror rocketleaguemapmaking.com links), archive.org as fallback; MD5 and Epic's signature are verified |
-| Dummy classes | [ghostrider-05/RL-dummy-classes2](https://github.com/ghostrider-05/RL-dummy-classes2), latest commit |
-| Not So Dummy Assets, dummy assets, map templates | [RocketLeagueMapmaking](https://github.com/RocketLeagueMapmaking) on GitHub, latest commit (Not So Dummy Assets file by file from Git LFS, 16 downloads at a time) |
-| Complexity template | Aceman3000, via [bakkesplugins](https://bakkesplugins.com/maps/339) |
+| Dummy classes | [RocketLeagueMapmaking/RL-Dummy-Classes](https://github.com/RocketLeagueMapmaking/RL-Dummy-Classes) merged with [ghostrider-05/RL-dummy-classes2](https://github.com/ghostrider-05/RL-dummy-classes2), latest commits |
+| Not So Dummy Assets, dummy assets | [RocketLeagueMapmaking](https://github.com/RocketLeagueMapmaking) on GitHub, latest commit (Not So Dummy Assets file by file from Git LFS, 16 downloads at a time) |
+| Map templates | Aceman3000, bundled in this repo with his permission (`assets/Templates.zip`); the cubemap fix is applied by `tools/patch_cubemap.py`, and `tools/add_template_meta.py` adds Mannfield and Dropshot to UDK_RL_Setup's New Level index |
 | Misc assets | Aceman3000, bundled in this repo with his permission (`assets/Misc.zip`) |
 
 The UDK EULA belongs to Epic Games. Setup shows it, straight from the installer, before anything is downloaded.
@@ -104,4 +106,4 @@ The UDK EULA belongs to Epic Games. Setup shows it, straight from the installer,
 ## Credits
 
 The RocketLeagueMapmaking community and [rocketleaguemapmaking.com](https://rocketleaguemapmaking.com); Mr. Swaggles'
-UDK_RL_Setup, which this replaces; Aceman3000 for Complexity and the Misc assets.
+UDK_RL_Setup, which this replaces; Aceman3000 for the map templates (Complexity among them) and the Misc assets; ghostrider-05 for the generated dummy classes.
