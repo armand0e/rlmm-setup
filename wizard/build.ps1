@@ -1,5 +1,6 @@
-# Builds dist\RLMM-Setup.exe (the setup wizard). install.ps1 and assets\Misc.zip are embedded, so rebuild after
-# changing either. Needs the .NET SDK (any recent version); the exe itself only needs .NET Framework 4.8.
+# Builds dist\RLMM-Setup.exe (the setup wizard). install.ps1 is embedded, so rebuild after changing it (changes to
+# sources.json, templates\ or assets\ need no rebuild: setup reads those from GitHub). Needs the .NET SDK (any
+# recent version); the exe itself only needs .NET Framework 4.8.
 #   powershell -ExecutionPolicy Bypass -File wizard\build.ps1            release build (asks for admin when run)
 #   powershell -ExecutionPolicy Bypass -File wizard\build.ps1 -Test      test build that runs without admin
 param([switch]$Test)

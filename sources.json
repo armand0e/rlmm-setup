@@ -1,0 +1,130 @@
+{
+  "format": 1,
+  "about": [
+    "Where RLMM Setup gets everything. Setup reads this file from GitHub (main) at every run, so a change pushed here",
+    "reaches every install, including RLMM-Setup.exe copies already out there, without a new release.",
+    "Test a change before pushing by running install.ps1 from your copy of the repo: it then uses this sources.json and",
+    "the local templates/ and assets/ folders instead of GitHub's.",
+    "Components install in the order listed. The keys of 'github' and 'classes' components are fixed (install.ps1",
+    "has a step for each); 'folder' components are generic, so one can be added for a new folder. GitHub components",
+    "install their latest commit; add \"ref\" (a branch, tag or commit) to pin one, or change \"repo\" to use a fork.",
+    "'folder' components are plain files in a folder of this repo (or of \"repo\" at \"ref\", if given). Each file goes",
+    "where the first matching 'install' rule says (paths relative to the UDK folder); files no rule matches, like a",
+    "README, are not installed. To update one, replace the file and push: no sizes or checksums to edit.",
+    "Raise 'format' only when install.ps1 changes how it reads this file."
+  ],
+  "udk": {
+    "about": [
+      "Epic's UDK 2015-02 installer. Mirrors are tried in order: Google Drive (~50 MB/s) first; archive.org caps",
+      "each user at about 1 MB/s, so it is the fallback. 'eula' locates EULA.INT.rtf inside the installer, so",
+      "setup can show the license before the 2 GB download."
+    ],
+    "file": "UDKInstall-2015-02.exe",
+    "size": 2001725784,
+    "md5": "790744C95A74626E7C381CCF13C88F9D",
+    "urls": [
+      "https://drive.usercontent.google.com/download?id=1z9C3t6nKW1utWilVshODxyGcucxuzbOW&export=download&confirm=t",
+      "https://drive.usercontent.google.com/download?id=1ozqiKBgcWSgcq7X5J6g0AErKyevjMRwd&export=download&confirm=t",
+      "https://archive.org/download/udkinstaller/UDKInstall-2015-02.exe"
+    ],
+    "eula": {
+      "offset": 21659229,
+      "compressed": 41421,
+      "crc": 606909622
+    }
+  },
+  "components": [
+    {
+      "key": "DummyClasses",
+      "title": "Dummy classes",
+      "kind": "classes",
+      "about": [
+        "Two repos merged. repo: hand-made for the editor (sprites for spawns and boost pads, the goal and FX",
+        "subobjects the stadiums and templates reference). generated: generated from the current Rocket League",
+        "build (~1,400 more classes). repo wins where both have a class, except the files in useGenerated, and",
+        "setup switches any other file that breaks the compile to the generated one. drop: repo-only classes",
+        "Rocket League no longer has. Raise 'merge' after changing these rules, so installs re-merge."
+      ],
+      "repo": "RocketLeagueMapmaking/RL-Dummy-Classes",
+      "generated": "ghostrider-05/RL-dummy-classes2",
+      "merge": 1,
+      "approx": 4194304,
+      "useGenerated": [
+        "Core/Classes/_Types_Core.uc",
+        "ProjectX/Classes/_Types_X.uc",
+        "ProjectX/Classes/ActorComponent_X.uc",
+        "TAGame/Classes/_Types_TA.uc",
+        "TAGame/Classes/Car_TA.uc",
+        "TAGame/Classes/GameEvent_Soccar_TA.uc",
+        "TAGame/Classes/PRI_TA.uc",
+        "TAGame/Classes/ProductAsset_Body_TA.uc",
+        "TAGame/Classes/ProductAsset_Bot_TA.uc",
+        "TAGame/Classes/ProductSlot_TA.uc",
+        "TAGame/Classes/Replay_TA.uc",
+        "TAGame/Classes/SaveData_TA.uc",
+        "TAGame/Classes/TutorialSave_TA.uc",
+        "TAGame/Classes/Vehicle_TA.uc"
+      ],
+      "drop": [
+        "TAGame/Classes/PlayerTitle_TA.uc",
+        "TAGame/Classes/ProductReference_TA.uc",
+        "TAGame/Classes/ProductReferenceArray_TA.uc"
+      ]
+    },
+    {
+      "key": "NotSoDummy",
+      "title": "Not So Dummy Assets",
+      "kind": "github",
+      "about": "Packages in Git LFS, fetched file by file; 'fallback' is a full zip used when that fails.",
+      "repo": "RocketLeagueMapmaking/RL_NotSoDummyAssets",
+      "approx": 3307434166,
+      "fallback": "https://rocketleaguemapmaking.com/resources/RL_NotSoDummyAssets-main.zip"
+    },
+    {
+      "key": "MiscAssets",
+      "title": "Misc assets (boost pads, crossbar)",
+      "kind": "folder",
+      "about": "Aceman3000's Misc packages (boost pad effects, physical materials incl. goal posts and crossbar).",
+      "folder": "assets/Misc",
+      "install": [
+        {
+          "files": "*.upk",
+          "to": "UDKGame/Content/DummyAssets/Misc"
+        }
+      ]
+    },
+    {
+      "key": "DummyAssets",
+      "title": "Dummy assets (gap fill)",
+      "kind": "github",
+      "about": "Only packages that no other content folder has are installed, so no package name is ambiguous.",
+      "repo": "RocketLeagueMapmaking/RL_DummyAssets",
+      "approx": 106954752
+    },
+    {
+      "key": "MapTemplates",
+      "title": "Map templates",
+      "kind": "folder",
+      "about": [
+        "File > New Level templates. See templates/README.md; tools/templates.py check / fix keeps them",
+        "right (cubemap capture time, New Level entries, names). 'backup' keeps the UDK files they replace."
+      ],
+      "folder": "templates",
+      "backup": true,
+      "install": [
+        {
+          "files": "Template_*.umap",
+          "to": "Engine/Content/Maps/Templates"
+        },
+        {
+          "files": "EditorMapTemplates.int",
+          "to": "Engine/Localization/INT"
+        },
+        {
+          "files": "MapTemplateIndex.upk",
+          "to": "Engine/Content"
+        }
+      ]
+    }
+  ]
+}

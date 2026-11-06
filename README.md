@@ -77,36 +77,43 @@ Run as a file to pass options:
 | `-ProjectName <name>` | UDK game project name (default `RLMM`) |
 | `-CacheDir <path>` | Download folder; files already there are verified and reused |
 | `-KeepDownloads` | Keep the installer and zips afterwards |
+| `-Local <folder>` | Use `sources.json`, `templates\` and `assets\` from this copy of the repo (automatic when `install.ps1` runs from one) |
 | `-CheckOnly` | Only show installed vs latest versions |
 | `-SkipPrerequisites`, `-SkipRocketLeague` | Leave the runtimes, or the Rocket League folder, alone |
 | `-AcceptEula`, `-Yes` | Unattended installs (only accept the EULA if you have read it) |
 
 ## For maintainers
 
+Everything setup installs is listed in **`sources.json`**, and the files this repo provides are plain files in
+folders. Setup reads both from GitHub at every run, so a pushed change reaches every install, existing RLMM-Setup.exe
+copies included, with no new release and no rebuild.
+
 | Path | What it is |
 |---|---|
-| `install.ps1` | The whole setup: one PowerShell function, in sections (sources, downloads, UDK base install, dummy classes, content packages, map templates, Rocket League testing, main) |
-| `Install-RLMM.bat` | Double-click launcher for a downloaded copy of the repo |
+| `sources.json` | Where every component comes from: the UDK installer mirrors, the class and asset repos (add `"ref"` to pin a branch, tag or commit, or change `"repo"` to use a fork), which classes win the merge, and where each repo folder's files are installed. Its `about` notes explain each field |
+| `templates\` | The map templates exactly as installed: `Template_*.umap`, `EditorMapTemplates.int` (the names in New Level) and `MapTemplateIndex.upk` (the New Level list). See [templates/README.md](templates/README.md) |
+| `assets\Misc\` | Aceman3000's Misc packages, installed to `UDKGame\Content\DummyAssets\Misc` |
+| `tools\templates.py` | Checks and fixes the templates (cubemap capture time, New Level entries, names). `ue3package.py`, `patch_cubemap.py` and `add_template_meta.py` are its package-editing parts |
+| `install.ps1` | The setup itself: one PowerShell function, in sections (console, downloads and sources, UDK base install, dummy classes, content packages, repo folders, Rocket League testing, main) |
+| `Install-RLMM.bat` | Double-click launcher for a copy of the repo |
 | `wizard\` | RLMM-Setup.exe (C#, .NET Framework 4.8): a wizard that runs `install.ps1` and shows its progress |
-| `assets\Misc.zip` | Aceman3000's Misc packages (embedded in the exe) |
-| `assets\Templates.zip` | The map templates (downloaded from this repo at install time) |
-| `tools\` | Python scripts that build `Templates.zip` |
 
-**Building the wizard.** It embeds `install.ps1` and `assets\Misc.zip`, so rebuild it after changing either. Building
-needs the .NET SDK; running the exe needs nothing extra. The exe lands in `dist\`.
+**Changing a template or asset.** Replace or add the file in `templates\` or `assets\Misc\`, run
+`python tools\templates.py fix` for templates, then commit and push. Setup sees that the folder changed, offers the
+update, and downloads only the files that differ.
+
+**Testing before you push.** Run setup from your copy of the repo: `install.ps1` next to `sources.json` uses that
+`sources.json` and the local `templates\` and `assets\` instead of GitHub's (it says so at the top).
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1 -InstallDir D:\UDK\RLMM-Test
+```
+
+**Building the wizard.** It embeds only `install.ps1`, so rebuild it after changing the script (nothing else needs a
+rebuild). Building needs the .NET SDK; running the exe needs nothing extra. The exe lands in `dist\`.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File wizard\build.ps1
-```
-
-**Rebuilding the map templates.** `tools\make_templates_zip.py` takes the template pack, its `EditorMapTemplates.int`
-and UDK_RL_Setup's `MapTemplateIndex.upk`, and writes `Templates.zip`. On the way it sets "Max Capture Time" to 2 on
-every cubemap (`patch_cubemap.py`) and adds Mannfield and Dropshot to the New Level list (`add_template_meta.py`).
-Both edit the packages directly rather than resaving them in UDK, which could drop Rocket League properties the dummy
-classes don't know. Then put the printed Size and Md5 into `MapTemplates` in `install.ps1`.
-
-```powershell
-python tools\make_templates_zip.py Templates.zip EditorMapTemplates.int MapTemplateIndex.upk assets\Templates.zip
 ```
 
 ## Where everything comes from
@@ -116,8 +123,8 @@ python tools\make_templates_zip.py Templates.zip EditorMapTemplates.int MapTempl
 | UDK 2015-02 installer | Google Drive (the mirror rocketleaguemapmaking.com links), archive.org as fallback; MD5 and Epic's signature are verified |
 | Dummy classes | [RocketLeagueMapmaking/RL-Dummy-Classes](https://github.com/RocketLeagueMapmaking/RL-Dummy-Classes) merged with [ghostrider-05/RL-dummy-classes2](https://github.com/ghostrider-05/RL-dummy-classes2), latest commits |
 | Not So Dummy Assets, dummy assets | [RocketLeagueMapmaking](https://github.com/RocketLeagueMapmaking) on GitHub, latest commit (Not So Dummy Assets file by file from Git LFS, 16 downloads at a time) |
-| Map templates | Mr. Swaggles (Soccar, Hoops, Dropshot, Test) and Aceman3000 (Mannfield; he also polished Dropshot), bundled in this repo (`assets/Templates.zip`); New Level thumbnails from [UDK_RL_Setup](https://github.com/RocketLeagueMapmaking/UDK_RL_Setup) |
-| Misc assets | Aceman3000, bundled in this repo with his permission (`assets/Misc.zip`) |
+| Map templates | Mr. Swaggles (Soccar, Hoops, Dropshot, Test) and Aceman3000 (Mannfield; he also polished Dropshot), in this repo (`templates/`); New Level thumbnails from [UDK_RL_Setup](https://github.com/RocketLeagueMapmaking/UDK_RL_Setup) |
+| Misc assets | Aceman3000, in this repo with his permission (`assets/Misc/`) |
 
 The UDK EULA belongs to Epic Games. Setup shows it, straight from the installer, before anything is downloaded.
 

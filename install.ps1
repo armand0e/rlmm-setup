@@ -21,6 +21,11 @@
         -SkipPrerequisites    skip the Visual C++ 2010 and DirectX 9 runtimes
         -SkipRocketLeague     do not touch the Rocket League folder
         -CheckOnly            only report installed vs latest versions
+        -Local <folder>       use sources.json, assets\ and templates\ from this copy of the repo instead of GitHub
+                              (automatic when install.ps1 runs from a copy of the repo: test edits before pushing)
+
+    What gets installed from where is data, not code: sources.json in the repo (see its "about" notes). The map
+    templates and Misc assets are plain files in the repo's templates\ and assets\Misc\ folders.
 #>
 
 function Invoke-RLMMSetup {
@@ -37,7 +42,7 @@ function Invoke-RLMMSetup {
         [switch]$CheckOnly,
         [switch]$NoElevate,
         [switch]$Elevated,
-        [string]$LocalAssets,      # set automatically when run from a copy of the repo: its assets\ folder
+        [string]$Local,            # a copy of the repo (set automatically when install.ps1 runs from one)
         [string]$SetupExe,         # set by RLMM-Setup.exe: copied into the install for the Update shortcut and uninstall
         [string]$SaveEula          # write Epic's EULA (RTF) to this path and stop (used by RLMM-Setup.exe)
     )
@@ -47,48 +52,14 @@ function Invoke-RLMMSetup {
     $ProgressPreference = 'SilentlyContinue'
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-    $SetupVersion = '1.1.0'
+    $SetupVersion = '1.0.0'
     $DefaultInstallDir = 'C:\UDK\RLMM'
-    $RepoRaw = 'https://raw.githubusercontent.com/armand0e/rlmm-setup/main'
+    $SetupRepo = 'armand0e/rlmm-setup'
+    $RepoRaw = "https://raw.githubusercontent.com/$SetupRepo/main"
+    $SourcesFormat = 1          # the sources.json format this script reads (its "format")
 
-    # --------------------------------------------------------------------------------------------------------
-    # Sources. GitHub components resolve to their latest commit at run time; files are pinned by size/MD5.
-    # --------------------------------------------------------------------------------------------------------
-    $UdkInstaller = @{
-        # Google Drive first: ~50 MB/s. archive.org caps each user at ~0.5-1.5 MB/s (more connections don't help),
-        # so it is only the fallback for when Drive's download quota for the file is used up.
-        Urls = @('https://drive.usercontent.google.com/download?id=1z9C3t6nKW1utWilVshODxyGcucxuzbOW&export=download&confirm=t',
-                 'https://drive.usercontent.google.com/download?id=1ozqiKBgcWSgcq7X5J6g0AErKyevjMRwd&export=download&confirm=t',
-                 'https://archive.org/download/udkinstaller/UDKInstall-2015-02.exe')
-        File = 'UDKInstall-2015-02.exe'
-        Size = [long]2001725784
-        Md5  = '790744C95A74626E7C381CCF13C88F9D'
-        # Where Epic's EULA sits inside the installer (local header of Binaries/InstallData/EULA.INT.rtf), so it can be
-        # shown before the 2 GB download.
-        EulaOffset = [long]21659229; EulaCompressed = [long]41421; EulaCrc = [uint32]606909622
-    }
-    # Order matters: Not So Dummy Assets and Misc before the classic dummy assets (which only fill gaps).
-    $Components = [ordered]@{
-        # Approx: typical archive size, only for progress display (GitHub archives are sent without a length).
-        # Dummy classes are a merge of two repos. RocketLeagueMapmaking/RL-Dummy-Classes is hand-made for the editor:
-        # sprites for spawns and boost pads, the goal and FX subobjects that the stadium packages and templates
-        # reference. ghostrider-05/RL-dummy-classes2 is generated from the current Rocket League build and has the
-        # ~1,400 classes the first one lacks (ProductAsset_*, WheelAsset*...); without those UDK logs ~30,000 load
-        # warnings and re-indexes the assets at every start. The community classes win wherever both have a class,
-        # except where that breaks the compile (Install-DummyClasses). Raise Merge when the merge rules change.
-        DummyClasses = @{ Title = 'Dummy classes'; Kind = 'classes'; Repo = 'RocketLeagueMapmaking/RL-Dummy-Classes'
-                          Generated = 'ghostrider-05/RL-dummy-classes2'; Merge = 1; Approx = [long]4MB }
-        NotSoDummy   = @{ Title = 'Not So Dummy Assets'; Kind = 'github'; Repo = 'RocketLeagueMapmaking/RL_NotSoDummyAssets'; Approx = [long]3307434166
-                          Fallback = 'https://rocketleaguemapmaking.com/resources/RL_NotSoDummyAssets-main.zip' }
-        MiscAssets   = @{ Title = 'Misc assets (boost pads, crossbar)'; Kind = 'file'; File = 'Misc.zip'; Size = [long]4435
-                          Md5 = '00143177BF26D54BADD34DFEA80D7CFD'; Url = "$RepoRaw/assets/Misc.zip"; Version = 'v1.0.6' }
-        DummyAssets  = @{ Title = 'Dummy assets (gap fill)'; Kind = 'github'; Repo = 'RocketLeagueMapmaking/RL_DummyAssets'; Approx = [long]102MB }
-        # Map templates: Soccar, Hoops, Dropshot and Test by Mr. Swaggles (Dropshot polished by Aceman3000), Mannfield
-        # by Aceman3000 (his Complexity stadium). Built by tools\make_templates_zip.py, which applies the cubemap fix
-        # (MaxCaptureTime 2) and adds Mannfield and Dropshot to UDK_RL_Setup's New Level index (MapTemplateIndex.upk).
-        MapTemplates = @{ Title = 'Map templates'; Kind = 'file'; File = 'Templates.zip'; Size = [long]14275065
-                          Md5 = 'E6F360169D1FB56977FACB54CB0885F2'; Url = "$RepoRaw/assets/Templates.zip"; Version = '2026-11 cubemap fix' }
-    }
+    # $UdkInstaller and $Components (in install order) are read from sources.json at the start of the main part
+    # (Read-Sources). Each component is a hashtable of its JSON fields (Title, Kind, Repo, Folder...).
 
     # --------------------------------------------------------------------------------------------------------
     # Console helpers
@@ -371,24 +342,40 @@ class RLMMSubStream : Stream {
         } catch { return $null } finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
     }
 
-    function Get-GitHubHead([string]$Repo) {
+    function Get-GitHubHead([string]$Repo, [string]$Ref) {
+        # The commit a branch, tag or commit id points to; the default branch's latest commit without $Ref.
+        if (-not $Ref) { $Ref = 'HEAD' }
         try {
-            $c = Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$Repo/commits/HEAD" -TimeoutSec 30 `
+            $c = Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$Repo/commits/$Ref" -TimeoutSec 30 `
                 -Headers @{ 'User-Agent' = 'RLMM-Setup'; 'Accept' = 'application/vnd.github+json' }
             return @{ Sha = [string]$c.sha; Date = ([datetime]$c.commit.committer.date).ToString('yyyy-MM-dd') }
         } catch { return $null }
     }
 
-    function Get-BundledFile($c, [string]$What) {
-        # A file kept in this repo's assets\ folder: copied from a local checkout (or the wizard) when it matches,
-        # downloaded from GitHub otherwise.
-        $zip = Join-Path $CacheDir $c.File
-        $bundled = if ($LocalAssets) { Join-Path $LocalAssets $c.File } else { $null }
-        if ($bundled -and -not (Test-Path -LiteralPath $zip) -and (Test-Path -LiteralPath $bundled) -and (Get-FileHash -LiteralPath $bundled -Algorithm MD5).Hash -eq $c.Md5) {
-            Copy-Item -LiteralPath $bundled -Destination $zip
+    function Read-Sources {
+        # sources.json from the local copy of the repo (-Local), else the newest one on GitHub: a change pushed there
+        # reaches every install, RLMM-Setup.exe copies included, without a new release. Returns Udk and Components.
+        if ($Local) {
+            $from = Join-Path $Local 'sources.json'
+            $text = [IO.File]::ReadAllText($from)
+        } else {
+            $from = "$RepoRaw/sources.json"
+            try { $text = (Invoke-WebRequest -UseBasicParsing -Uri $from -TimeoutSec 30 -UserAgent 'RLMM-Setup').Content }
+            catch { throw 'Could not reach GitHub (raw.githubusercontent.com). Check your internet connection and run setup again.' }
         }
-        Get-Download @($c.Url) $zip $c.Size $c.Md5 $What
-        return $zip
+        try { $data = ConvertTo-Hashtable ($text | ConvertFrom-Json) } catch { throw "$from is not valid JSON: $($_.Exception.Message)" }
+        if ($data.format -ne $SourcesFormat) {
+            throw "This RLMM Setup is out of date (it reads sources.json format $SourcesFormat, $from is format $($data.format)). Get the latest: https://github.com/$SetupRepo/releases/latest"
+        }
+        $u = $data.udk
+        $udk = @{ Urls = @($u.urls); File = [string]$u.file; Size = [long]$u.size; Md5 = [string]$u.md5
+                  EulaOffset = [long]$u.eula.offset; EulaCompressed = [long]$u.eula.compressed; EulaCrc = [uint32]$u.eula.crc }
+        $components = [ordered]@{}
+        foreach ($c in $data.components) {
+            if ($c.ContainsKey('Approx')) { $c.Approx = [long]$c.Approx }
+            $components[[string]$c.Key] = $c
+        }
+        return @{ Udk = $udk; Components = $components }
     }
 
     # --------------------------------------------------------------------------------------------------------
@@ -795,15 +782,8 @@ class RLMMSubStream : Stream {
         return $true
     }
 
-    # Where the community class (RL-Dummy-Classes) and the generated one (RL-dummy-classes2) can't both win. Found by
-    # compiling the merge (2026-11-05); Install-DummyClasses re-checks with the compiler, so upstream changes are
-    # handled at install time and these only save compile rounds.
-    $ClassesFromGenerated = @('Core\Classes\_Types_Core.uc', 'ProjectX\Classes\_Types_X.uc', 'ProjectX\Classes\ActorComponent_X.uc',
-        'TAGame\Classes\_Types_TA.uc', 'TAGame\Classes\Car_TA.uc', 'TAGame\Classes\GameEvent_Soccar_TA.uc', 'TAGame\Classes\PRI_TA.uc',
-        'TAGame\Classes\ProductAsset_Body_TA.uc', 'TAGame\Classes\ProductAsset_Bot_TA.uc', 'TAGame\Classes\ProductSlot_TA.uc',
-        'TAGame\Classes\Replay_TA.uc', 'TAGame\Classes\SaveData_TA.uc', 'TAGame\Classes\TutorialSave_TA.uc', 'TAGame\Classes\Vehicle_TA.uc')
-    # community-only classes that Rocket League no longer has and that clash with the generated types
-    $ClassesDropped = @('TAGame\Classes\PlayerTitle_TA.uc', 'TAGame\Classes\ProductReference_TA.uc', 'TAGame\Classes\ProductReferenceArray_TA.uc')
+    # Which class wins where both repos have one: sources.json, DummyClasses useGenerated / drop (found by compiling
+    # the merge). Install-DummyClasses re-checks with the compiler, so those lists only save compile rounds.
 
     function Get-ClassFileNames([string]$Root) {
         # 'Pkg\Classes\File.uc' -> full path, for one extracted classes repo
@@ -895,8 +875,9 @@ class RLMMSubStream : Stream {
         if ($plan.Base.Count -eq 0 -or $plan.Gen.Count -eq 0) { throw 'A dummy classes download contained no classes.' }
         foreach ($rel in $plan.Gen.Keys) { $plan.Choice[$rel] = 'gen' }
         foreach ($rel in $plan.Base.Keys) { $plan.Choice[$rel] = 'base' }
-        foreach ($rel in $ClassesFromGenerated) { if ($plan.Gen.ContainsKey($rel) -and $plan.Base.ContainsKey($rel)) { $plan.Choice[$rel] = 'gen' } }
-        foreach ($rel in $ClassesDropped) { if ($plan.Base.ContainsKey($rel) -and -not $plan.Gen.ContainsKey($rel)) { $plan.Choice[$rel] = 'drop' } }
+        $cfg = $Components.DummyClasses
+        foreach ($rel in @($cfg.UseGenerated | ForEach-Object { ([string]$_).Replace('/', '\') })) { if ($plan.Gen.ContainsKey($rel) -and $plan.Base.ContainsKey($rel)) { $plan.Choice[$rel] = 'gen' } }
+        foreach ($rel in @($cfg.Drop | ForEach-Object { ([string]$_).Replace('/', '\') })) { if ($plan.Base.ContainsKey($rel) -and -not $plan.Gen.ContainsKey($rel)) { $plan.Choice[$rel] = 'drop' } }
 
         $written = Write-MergedClasses $src $plan
         # Files upstream removed are deleted only from the Rocket League packages; Core, Engine and GFxUI files
@@ -1150,25 +1131,120 @@ class RLMMSubStream : Stream {
     }
 
     # --------------------------------------------------------------------------------------------------------
-    # Map templates
+    # Repo folders (kind "folder": the map templates, Misc assets). Plain files in a folder of this repo (or the
+    # component's "repo"), each placed by the component's "install" rules. Files are fetched one by one and checked
+    # against their Git blob id, so swapping a file in the repo is all an update takes; unchanged files are skipped.
     # --------------------------------------------------------------------------------------------------------
-    function Install-MapTemplates([string]$Dest, [string]$ZipPath) {
-        $tplDir = Join-Path $Dest 'Engine\Content\Maps\Templates'
-        $int = Join-Path $Dest 'Engine\Localization\INT\EditorMapTemplates.int'
-        $index = Join-Path $Dest 'Engine\Content\MapTemplateIndex.upk'
-        New-Item -ItemType Directory -Force -Path $tplDir | Out-Null
-        $written = Expand-Archive2 $ZipPath {
-            param($inner)
-            $to = if ($inner -match '^Template_\w+\.umap$') { Join-Path $tplDir $inner }
-                  elseif ($inner -eq 'EditorMapTemplates.int') { $int } elseif ($inner -eq 'MapTemplateIndex.upk') { $index } else { $null }
-            # keep the file it replaces the first time (UDK's own, or what an earlier setup installed)
-            if ($to -and (Test-Path -LiteralPath $to) -and -not (Test-Path -LiteralPath "$to.bak")) { Copy-Item -LiteralPath $to -Destination "$to.bak" }
-            return $to
-        } $false
-        $names = @($written | Where-Object { $_ -like '*.umap' } | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_).Substring(9) })
-        if ($names.Count -eq 0) { throw 'The template pack contained no maps.' }
-        Good ('File > New Level now offers: {0}' -f ($names -join ', '))
-        return $written
+    function Get-GitBlobSha([string]$Path) {
+        # The id Git gives a file's content: SHA-1 of "blob <size>\0" + the bytes.
+        $fs = [IO.File]::OpenRead($Path)
+        $sha = [Security.Cryptography.SHA1]::Create()
+        try {
+            $head = [Text.Encoding]::ASCII.GetBytes("blob $($fs.Length)`0")
+            [void]$sha.TransformBlock($head, 0, $head.Length, $null, 0)
+            $buf = New-Object byte[] 1048576
+            while (($n = $fs.Read($buf, 0, $buf.Length)) -gt 0) { [void]$sha.TransformBlock($buf, 0, $n, $null, 0) }
+            [void]$sha.TransformFinalBlock($buf, 0, 0)
+            return (-join ($sha.Hash | ForEach-Object { $_.ToString('x2') }))
+        } finally { $fs.Close(); $sha.Dispose() }
+    }
+
+    function Get-FolderTarget($c, [string]$Name) {
+        # Where a file goes (relative to the UDK folder) by the first matching install rule; $null = not installed.
+        foreach ($r in @($c.Install)) { if ($Name -like [string]$r.Files) { return ([string]$r.To).Replace('/', '\').Trim('\') } }
+        return $null
+    }
+
+    function Get-FolderFiles($c) {
+        # The folder's installable files: Name, Sha (Git blob id), Size, To, and Path (local copy) or Url (GitHub).
+        $files = New-Object System.Collections.Generic.List[object]
+        if ($Local -and -not $c.ContainsKey('Repo')) {
+            $dir = Join-Path $Local ([string]$c.Folder).Replace('/', '\')
+            if (-not (Test-Path -LiteralPath $dir)) { return $null }
+            foreach ($fi in Get-ChildItem -LiteralPath $dir -File) {
+                $to = Get-FolderTarget $c $fi.Name
+                if ($null -ne $to) { $files.Add(@{ Name = $fi.Name; Sha = (Get-GitBlobSha $fi.FullName); Size = $fi.Length; To = $to; Path = $fi.FullName }) }
+            }
+        } else {
+            $repo = if ($c.ContainsKey('Repo')) { $c.Repo } else { $SetupRepo }
+            $ref = if ($c.ContainsKey('Ref')) { $c.Ref } else { 'main' }
+            try {
+                $list = Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$repo/contents/$($c.Folder)?ref=$ref" -TimeoutSec 30 `
+                    -Headers @{ 'User-Agent' = 'RLMM-Setup'; 'Accept' = 'application/vnd.github+json' }
+            } catch { return $null }
+            foreach ($e in @($list)) {
+                if ($e.type -ne 'file') { continue }
+                $to = Get-FolderTarget $c $e.name
+                if ($null -ne $to) { $files.Add(@{ Name = [string]$e.name; Sha = [string]$e.sha; Size = [long]$e.size; To = $to; Url = [string]$e.download_url }) }
+            }
+        }
+        return ,$files
+    }
+
+    function Get-FolderVersion($Files) {
+        # Same files, same version, whether they were listed locally or on GitHub.
+        $lines = [string[]]@($Files | ForEach-Object { "$($_.Name) $($_.Sha)" })
+        [Array]::Sort($lines, [StringComparer]::Ordinal)
+        $md5 = [Security.Cryptography.MD5]::Create()
+        try { $h = $md5.ComputeHash([Text.Encoding]::UTF8.GetBytes($lines -join "`n")) } finally { $md5.Dispose() }
+        return (-join ($h[0..5] | ForEach-Object { $_.ToString('x2') }))
+    }
+
+    function Get-FolderDate($c) {
+        # Date of the last commit that touched the folder (for the version table).
+        $repo = if ($c.ContainsKey('Repo')) { $c.Repo } else { $SetupRepo }
+        $ref = if ($c.ContainsKey('Ref')) { $c.Ref } else { 'main' }
+        try {
+            $r = @(Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$repo/commits?path=$($c.Folder)&sha=$ref&per_page=1" -TimeoutSec 30 `
+                -Headers @{ 'User-Agent' = 'RLMM-Setup'; 'Accept' = 'application/vnd.github+json' })
+            if ($r.Count -gt 0) { return ([datetime]$r[0].commit.committer.date).ToString('yyyy-MM-dd') }
+        } catch { }
+        return $null
+    }
+
+    function Install-Folder([string]$Dest, $c, $Files, $Old) {
+        # With "backup": true, the file a component replaces is kept as <file>.bak the first time (UDK's own, or one
+        # from before RLMM Setup) and put back if the file is later removed from the repo folder.
+        $stage = Join-Path $CacheDir $c.Key
+        $written = New-Object System.Collections.Generic.List[string]
+        $ours = @{}
+        if ($Old -and $Old.ContainsKey('Files')) { foreach ($rel in @($Old.Files)) { $ours[([string]$rel).ToLowerInvariant()] = $true } }
+        $copied = 0
+        foreach ($f in $Files) {
+            $to = Join-Path (Join-Path $Dest $f.To) $f.Name
+            $written.Add($to)
+            # back up a file setup didn't put there, even when it's identical: removing it from the repo restores it
+            if ($c.Backup -and [IO.File]::Exists($to) -and -not [IO.File]::Exists("$to.bak") -and -not $ours.ContainsKey((Get-Rel $Dest $to).ToLowerInvariant())) {
+                Copy-Item -LiteralPath $to -Destination "$to.bak"
+            }
+            if ([IO.File]::Exists($to) -and (Get-GitBlobSha $to) -eq $f.Sha) { continue }   # already this version
+            $src = if ($f.ContainsKey('Path')) { $f.Path } else { Join-Path $stage $f.Name }
+            if (-not $f.ContainsKey('Path') -and -not ([IO.File]::Exists($src) -and (Get-GitBlobSha $src) -eq $f.Sha)) {
+                if ([IO.File]::Exists($src)) { Remove-Item -LiteralPath $src -Force }
+                Get-Download @($f.Url) $src $f.Size '' $f.Name
+                if ((Get-GitBlobSha $src) -ne $f.Sha) { Remove-Item -LiteralPath $src -Force; throw "The download of $($f.Name) was corrupt." }
+            }
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $to) | Out-Null
+            Copy-Item -LiteralPath $src -Destination $to -Force
+            $copied++
+        }
+        # Files gone from the repo folder: put back what they replaced, or delete them (only inside the rule targets).
+        $removed = 0
+        if ($ours.Count) {
+            $keep = @{}; foreach ($w in $written) { $keep[(Get-Rel $Dest $w).ToLowerInvariant()] = $true }
+            $dirs = @($c.Install | ForEach-Object { Join-Path $Dest ([string]$_.To).Replace('/', '\').Trim('\') })
+            foreach ($rel in @($Old.Files)) {
+                if ($keep.ContainsKey(([string]$rel).ToLowerInvariant())) { continue }
+                $abs = Join-Path $Dest $rel
+                if (-not @($dirs | Where-Object { (Split-Path -Parent $abs) -ieq $_ }).Count) { continue }
+                if ([IO.File]::Exists("$abs.bak")) { Move-Item -LiteralPath "$abs.bak" -Destination $abs -Force; $removed++ }
+                elseif ([IO.File]::Exists($abs)) { Remove-Item -LiteralPath $abs -Force; $removed++ }
+            }
+        }
+        if (-not $KeepDownloads -and (Test-Path -LiteralPath $stage)) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue }
+        $extra = if ($removed) { ", $removed removed" } else { '' }
+        Good ('{0} installed ({1} files, {2} new or changed{3})' -f $c.Title, $written.Count, $copied, $extra)
+        return ,$written
     }
 
     # --------------------------------------------------------------------------------------------------------
@@ -1351,21 +1427,29 @@ try {
     # --------------------------------------------------------------------------------------------------------
     function Get-Latest([string]$Key) {
         $c = $Components[$Key]
+        $ref = if ($c.ContainsKey('Ref')) { [string]$c.Ref } else { '' }
         if ($c.Kind -eq 'github') {
-            $h = Get-GitHubHead $c.Repo
+            $h = Get-GitHubHead $c.Repo $ref
             if (-not $h) { return $null }
             return @{ Version = $h.Sha; Label = ('{0} ({1})' -f $h.Sha.Substring(0, 7), $h.Date); Url = "https://codeload.github.com/$($c.Repo)/zip/$($h.Sha)" }
         }
         if ($c.Kind -eq 'classes') {
-            $a = Get-GitHubHead $c.Repo; $b = Get-GitHubHead $c.Generated
+            $a = Get-GitHubHead $c.Repo $ref
+            $b = Get-GitHubHead $c.Generated $(if ($c.ContainsKey('GeneratedRef')) { [string]$c.GeneratedRef } else { '' })
             if (-not $a -or -not $b) { return $null }
             return @{ Version = ('m{0}:{1}+{2}' -f $c.Merge, $a.Sha, $b.Sha); Label = ('{0} + {1}' -f $a.Sha.Substring(0, 7), $b.Sha.Substring(0, 7))
                       ShaA = $a.Sha; ShaB = $b.Sha
                       Url = "https://codeload.github.com/$($c.Repo)/zip/$($a.Sha)"; Url2 = "https://codeload.github.com/$($c.Generated)/zip/$($b.Sha)" }
         }
-        if (-not $c.Url) { return $null }
-        $label = if ($c.ContainsKey('Version')) { $c.Version } else { 'current' }
-        return @{ Version = $c.Md5; Label = $label; Url = $c.Url }
+        if ($c.Kind -eq 'folder') {
+            $files = Get-FolderFiles $c
+            if ($null -eq $files -or $files.Count -eq 0) { return $null }
+            $v = Get-FolderVersion $files
+            $when = if ($files[0].ContainsKey('Path')) { 'local' } else { Get-FolderDate $c }
+            $label = if ($when) { '{0} ({1})' -f $v.Substring(0, 7), $when } else { $v.Substring(0, 7) }
+            return @{ Version = $v; Label = $label; Files = $files }
+        }
+        throw "sources.json: component $Key has an unknown kind '$($c.Kind)'."
     }
 
     # ========================================================================================================
@@ -1376,6 +1460,11 @@ try {
     Say '  ================================================================' DarkCyan
     Say "    RLMM Setup $SetupVersion  -  UDK for Rocket League map making" White
     Say '  ================================================================' DarkCyan
+
+    if ($Local) { $Local = [IO.Path]::GetFullPath($Local).TrimEnd('\'); Info "Using the repo copy in $Local (sources.json, assets, templates) instead of GitHub" }
+    $sourceData = Read-Sources
+    $UdkInstaller = $sourceData.Udk
+    $Components = $sourceData.Components
 
     if ($SaveEula) {
         $rtf = Get-EulaRtf
@@ -1445,7 +1534,7 @@ try {
         $c = $Components[$k]; $l = $latest[$k]
         $have = if ($state.Components.ContainsKey($k)) { $state.Components[$k] } else { $null }
         $haveLabel = if ($have) { [string]$have.Label } else { '-' }
-        $latLabel = if ($l) { $l.Label } elseif ($c.Kind -in 'github', 'classes') { '(GitHub unreachable)' } else { '(no download source)' }
+        $latLabel = if ($l) { $l.Label } elseif ($c.Kind -eq 'folder' -and $Local) { '(folder missing)' } else { '(GitHub unreachable)' }
         $needs = $false
         if ($l) { $needs = (-not $have) -or ([string]$have.Version -ne [string]$l.Version) }
         $flag = if (-not $needs) { 'ok' } elseif ($have) { 'update' } else { 'install' }
@@ -1551,24 +1640,21 @@ try {
                     $written = Install-ContentRepo $InstallDir $zip $old 'Not So Dummy Assets' '' $false
                 }
             }
-            elseif ($k -eq 'MiscAssets') {
-                $zip = Get-BundledFile $c 'Misc assets'
-                $root = Join-Path $InstallDir 'UDKGame\Content\DummyAssets\Misc'
-                $written = Expand-Archive2 $zip { param($inner) if ($inner -match '\.upk$') { return Join-Path $root ($inner.Split('/')[-1]) } } $false
-                Good ('Misc assets installed ({0} packages: boost pad effects, physical materials incl. goal posts and crossbar)' -f $written.Count)
-            }
             elseif ($k -eq 'DummyAssets') {
                 $zip = Join-Path $CacheDir "RL_DummyAssets-$short.zip"; $toDelete += $zip
                 Get-Download @($l.Url) $zip 0 '' 'dummy assets'
                 $written = Install-ContentRepo $InstallDir $zip $old 'Dummy assets' 'RL_DummyAssets' $true
             }
-            elseif ($k -eq 'MapTemplates') {
-                $zip = Get-BundledFile $c 'map templates'; $toDelete += $zip
-                $written = Install-MapTemplates $InstallDir $zip
-                # Setup 1.0.0/1.0.1 installed Complexity 1.0.6 (bakkesplugins) as the Soccar template and the rest from
-                # UDK_RL_Setup; the pack replaces both (Complexity is its Mannfield template now).
-                [void]$state.Components.Remove('Complexity'); [void]$state.Components.Remove('Templates')
+            elseif ($c.Kind -eq 'folder') {
+                $written = Install-Folder $InstallDir $c $l.Files $old
+                if ($k -eq 'MapTemplates') {
+                    $names = @($written | Where-Object { $_ -like '*\Template_*.umap' } | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_).Substring(9) })
+                    Good ('File > New Level offers: {0}' -f ($names -join ', '))
+                    # Early test builds installed the templates as two components (Complexity, Templates).
+                    [void]$state.Components.Remove('Complexity'); [void]$state.Components.Remove('Templates')
+                }
             }
+            else { throw "No install step for component $k (sources.json)." }
             $entry = @{ Version = $l.Version; Label = $l.Label; At = (Get-Date).ToString('yyyy-MM-dd') }
             if (@($written).Count -gt 0) { $entry.Files = @($written | ForEach-Object { Get-Rel $InstallDir $_ }) }
             if ($extraState) { foreach ($x in $extraState.Keys) { $entry[$x] = $extraState[$x] } }
@@ -1646,9 +1732,10 @@ function ConvertTo-RLMMArgs {
 
 function Start-RLMMSetup {
     param([hashtable]$Options)
-    # Run from a copy of the repo (install.ps1 or Install-RLMM.bat): use its bundled assets before downloading them.
-    if (-not $Options.ContainsKey('LocalAssets') -and $PSScriptRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'assets'))) {
-        $Options['LocalAssets'] = Join-Path $PSScriptRoot 'assets'
+    # Run from a copy of the repo (install.ps1 or Install-RLMM.bat beside sources.json): use that copy's sources.json,
+    # templates and assets, so edits can be tested before they are pushed.
+    if (-not $Options.ContainsKey('Local') -and $PSScriptRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'sources.json'))) {
+        $Options['Local'] = $PSScriptRoot
     }
     $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $isAdmin -and -not $Options.ContainsKey('NoElevate') -and -not $Options.ContainsKey('CheckOnly')) {

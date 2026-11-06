@@ -12,6 +12,19 @@ import sys
 from ue3package import Package, name_entry, relocate, set_counts
 
 
+def cubemap_values(data):
+    """[(component, MaxCaptureTime or None when not stored, i.e. the default 0)] for every cubemap of a map."""
+    pkg = Package(data)
+    out = []
+    for e in pkg.exports:
+        if pkg.class_name(e) != 'SceneCaptureCubeMapComponent':
+            continue
+        have = [p for p in pkg.properties(e, preamble=8) if p[0] == 'MaxCaptureTime']
+        value = struct.unpack_from('<f', data, have[0][3])[0] if have else None
+        out.append(('%s.%s' % (pkg.object_name(e['outer']), e['name']), value))
+    return out
+
+
 def patch(data, value=2.0):
     pkg = Package(data)
     float_type = pkg.name_index('FloatProperty')

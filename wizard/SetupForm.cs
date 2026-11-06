@@ -515,7 +515,7 @@ namespace RLMMSetup
                 if (MessageBox.Show(this, "UDK is running from " + targetDir + ". Save your work and close UDK, then click OK.", "RLMM Setup",
                         MessageBoxButtons.OKCancel, MessageBoxIcon.Information) != DialogResult.OK) return;
             }
-            var args = new List<string> { "-NoElevate", "-Yes", "-InstallDir", targetDir, "-LocalAssets", Payload.AssetsDir, "-SetupExe", Application.ExecutablePath };
+            var args = new List<string> { "-NoElevate", "-Yes", "-InstallDir", targetDir, "-SetupExe", Application.ExecutablePath };
             if (fresh)
             {
                 if (!updating) args.Add("-AcceptEula");
